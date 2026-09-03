@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Панель управления</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0a0f18; color: #e0e7ef;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh; padding: 16px;
+  }
+
+  .header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #1c2e42;
+  }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header a { color: #3b82f6; text-decoration: none; font-size: 13px; }
+
+  .layout {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 900px;
+  }
+  .full-width { grid-column: 1 / -1; }
+
+  .card {
+    background: #111a28; border: 1px solid #1c2e42; border-radius: 14px; padding: 16px;
+  }
+  .card h2 {
+    font-size: 13px; font-weight: 500; color: #5d7286;
+    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 12px;
+  }
+
+  /* Текстовый ввод */
+  .text-input-area { display: flex; flex-direction: column; gap: 8px; }
+  .text-input-area textarea {
+    width: 100%; min-height: 80px; padding: 12px; font-size: 15px;
+    background: #0d1520; color: #e0e7ef; border: 1px solid #1c2e42;
+    border-radius: 10px; resize: vertical; outline: none;
+    font-family: inherit;
+  }
+  .text-input-area textarea:focus { border-color: #3b82f6; }
+
+  .presets {
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .preset-btn {
+    padding: 6px 12px; font-size: 12px;
+    background: #0d1520; color: #8fa3b8; border: 1px solid #1c2e42;
+    border-radius: 8px; cursor: pointer; transition: all .15s;
+  }
+  .preset-btn:hover { background: #1c2e42; color: #e0e7ef; }
+
+  /* Кнопки */
+  .actions { display: flex; flex-direction: column; gap: 8px; }
+  .actions button {
+    padding: 14px 16px; font-size: 15px; font-weight: 600;
+    color: #fff; border: none; border-radius: 10px;
+    cursor: pointer; transition: background .2s;
+  }
+  .actions button:disabled { background: #1c2e42 !important; color: #5d7286; cursor: default; }
+  .btn-primary { background: #2563eb; }
+  .btn-primary:hover { background: #1d4fd7; }
+  .btn-green { background: #16a34a; }
+  .btn-green:hover { background: #15803d; }
+  .btn-secondary { background: #142336; border: 1px solid #1c2e42 !important; }
+  .btn-secondary:hover { background: #1c2e42; }
+
+  .queue-info {
+    font-size: 13px; color: #8fa3b8; margin-top: 8px;
+    padding: 8px 12px; background: #0d1520; border-radius: 8px;
+  }
+  .queue-info b { color: #3b82f6; }
+
+  /* Настройки */
+  .settings { display: flex; flex-direction: column; gap: 10px; }
+  .setting-row { display: flex; flex-direction: column; gap: 4px; }
+  .setting-row label { font-size: 12px; color: #5d7286; }
+  .setting-row select, .setting-row input {
+    padding: 8px 12px; font-size: 14px;
+    background: #0d1520; color: #e0e7ef; border: 1px solid #1c2e42;
+    border-radius: 8px; outline: none;
+  }
+  .setting-row select:focus, .setting-row input:focus { border-color: #3b82f6; }
+
+  /* Гости */
+  .guests-list { display: flex; flex-direction: column; gap: 6px; }
+  .guest-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; background: #0d1520; border-radius: 8px; font-size: 14px;
+  }
+  .guest-row .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fbf8f; flex-shrink: 0; }
+  .guest-row.greeted .dot { background: #5d7286; }
+  .guest-row.greeted { color: #5d7286; }
+  .guest-row .name { flex: 1; }
+  .guest-row .time { font-size: 11px; color: #5d7286; }
+  .empty-state { color: #3b5068; font-size: 13px; padding: 16px 0; text-align: center; }
+
+  /* Лог */
+  .log {
+    max-height: 100px; overflow-y: auto;
+    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-size: 12px; color: #5d7286; line-height: 1.6;
+    padding: 10px; background: #0a0f18; border: 1px solid #1c2e42;
+    border-radius: 10px;
+  }
+  .log .ok { color: #3fbf8f; }
+  .log .err { color: #f87171; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Панель управления</h1>
+  <a href="/host" target="_blank">Экран ведущего &rarr;</a>
+</div>
+
+<div class="layout">
+
+  <!-- Ручной ввод текста -->
+  <div class="card full-width">
+    <h2>Голос аватара</h2>
+    <div class="text-input-area">
+      <textarea id="free-text" placeholder="Введите любой текст и аватар произнесёт его..."></textarea>
+      <div class="presets">
+        <button class="preset-btn" onclick="setPreset(0)">Приветствие</button>
+        <button class="preset-btn" onclick="setPreset(1)">Про день</button>
+        <button class="preset-btn" onclick="setPreset(2)">Про прототип</button>
+        <button class="preset-btn" onclick="setPreset(3)">Прощание</button>
+      </div>
+      <button class="btn-green" onclick="speakFreeText()" id="btn-speak">Озвучить</button>
+    </div>
+  </div>
+
+  <!-- Приветствие гостей -->
+  <div class="card">
+    <h2>Приветствие гостей</h2>
+    <div class="actions">
+      <button class="btn-primary" onclick="greetNext()" id="btn-next">Следующий гость</button>
+      <button class="btn-secondary" onclick="greetAll()" id="btn-all">Всех по очереди</button>
+    </div>
+    <div class="queue-info" id="queue-info">Очередь пуста</div>
+  </div>
+
+  <!-- Настройки -->
+  <div class="card">
+    <h2>Настройки</h2>
+    <div class="settings">
+      <div class="setting-row">
+        <label>Голос</label>
+        <select id="voice-select">
+          <option value="ru-RU-DmitryNeural">Дмитрий (мужской)</option>
+          <option value="ru-RU-SvetlanaNeural">Светлана (женский)</option>
+          <option value="ru-RU-DariyaNeural">Дарья (женский)</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label>Шаблон приветствия</label>
+        <input type="text" id="greeting-tpl" value="Привет, {name}! Добро пожаловать!">
+      </div>
+      <div class="setting-row">
+        <label>Заголовок на экране</label>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="title-input" value="Добро пожаловать на вечер" style="flex:1;">
+          <button class="btn-secondary" onclick="setTitle()" style="padding:8px 12px;font-size:13px;">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Список гостей -->
+  <div class="card full-width">
+    <h2>Гости (<span id="guest-count">0</span>)</h2>
+    <div class="guests-list" id="guests-list">
+      <div class="empty-state">Пока никто не подключился</div>
+    </div>
+  </div>
+
+  <!-- Лог -->
+  <div class="card full-width">
+    <h2>Лог</h2>
+    <div class="log" id="log"><div>Панель загружена</div></div>
+  </div>
+</div>
+
+<script>
+const PRESETS = [
+  "Привет! Меня зовут Аватар, и я рад с вами познакомиться.",
+  "Сегодня отличный день, чтобы попробовать что-то новое.",
+  "Обратите внимание: это полностью рабочий прототип с синтезом речи.",
+  "Спасибо, что слушаете. До новых встреч!",
+];
+
+const bc = new BroadcastChannel('avatar-host');
+const freeText = document.getElementById('free-text');
+const guestsList = document.getElementById('guests-list');
+const logEl = document.getElementById('log');
+
+let speaking = false;
+let queue = [];
+let doneResolve = null;
+
+// Слушаем 'done' от экрана — аудио закончилось
+bc.onmessage = (e) => {
+  if (e.data.action === 'done' && doneResolve) {
+    doneResolve();
+    doneResolve = null;
+  }
+};
+
+function log(msg, cls) {
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = `[${new Date().toLocaleTimeString('ru')}] ${msg}`;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setPreset(i) { freeText.value = PRESETS[i]; }
+
+// --- Синтез + отправка на экран ---
+async function speak(text) {
+  speaking = true;
+  document.getElementById('btn-speak').disabled = true;
+  document.getElementById('btn-next').disabled = true;
+  document.getElementById('btn-all').disabled = true;
+
+  try {
+    const res = await fetch('/api/say', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: document.getElementById('voice-select').value })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    log(`"${text}"`, 'ok');
+
+    // Отправляем на экран: воспроизвести аудио + показать субтитры
+    bc.postMessage({ action: 'speak', audio_url: data.audio_url, text: text });
+
+    // Ждём пока экран сообщит что аудио закончилось
+    await new Promise((resolve) => {
+      doneResolve = resolve;
+      // Fallback: макс 30 сек
+      setTimeout(() => { if (doneResolve) { doneResolve(); doneResolve = null; } }, 30000);
+    });
+  } catch (e) {
+    log('Ошибка: ' + e.message, 'err');
+  }
+
+  speaking = false;
+  document.getElementById('btn-speak').disabled = false;
+  document.getElementById('btn-next').disabled = false;
+  document.getElementById('btn-all').disabled = false;
+}
+
+function speakFreeText() {
+  const text = freeText.value.trim();
+  if (!text || speaking) return;
+  speak(text);
+}
+
+// --- Приветствие ---
+async function greetNext() {
+  if (speaking || queue.length === 0) return;
+  const guest = queue.shift();
+  const tpl = document.getElementById('greeting-tpl').value;
+  const text = tpl.replace('{name}', guest.name);
+  await speak(text);
+  try {
+    await fetch('/api/guest/greet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: guest.token })
+    });
+  } catch (e) {}
+  log(`${guest.name} — приветствован`, 'ok');
+  refreshGuests();
+}
+
+async function greetAll() {
+  while (queue.length > 0) await greetNext();
+}
+
+// --- Заголовок ---
+function setTitle() {
+  const text = document.getElementById('title-input').value.trim();
+  if (!text) return;
+  bc.postMessage({ action: 'title', text });
+  log(`Заголовок: "${text}"`);
+}
+
+// --- Гости ---
+async function refreshGuests() {
+  try {
+    const res = await fetch('/api/guests');
+    const data = await res.json();
+    document.getElementById('guest-count').textContent = data.count;
+    queue = data.guests.filter(g => !g.greeted);
+
+    const qi = document.getElementById('queue-info');
+    if (queue.length > 0) {
+      qi.innerHTML = `Следующий: <b>${esc(queue[0].name)}</b> (${queue.length} в очереди)`;
+    } else {
+      qi.textContent = speaking ? 'Говорит...' : 'Очередь пуста';
+    }
+
+    if (data.guests.length === 0) {
+      guestsList.innerHTML = '<div class="empty-state">Пока никто не подключился</div>';
+      return;
+    }
+    guestsList.innerHTML = data.guests.map(g => {
+      const t = new Date(g.joined_at * 1000).toLocaleTimeString('ru', {hour:'2-digit',minute:'2-digit'});
+      return `<div class="guest-row ${g.greeted?'greeted':''}">
+        <span class="dot"></span><span class="name">${esc(g.name)}</span><span class="time">${t}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {}
+}
+
+setInterval(refreshGuests, 2000);
+refreshGuests();
+
+// Ctrl+Enter для быстрой озвучки
+freeText.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    speakFreeText();
+  }
+});
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+</script>
+</body>
+</html>

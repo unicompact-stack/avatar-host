@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Аватар-хост</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #000; color: #e8eef5;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden; height: 100vh; display: flex; flex-direction: column;
+  }
+
+  .welcome-title {
+    position: absolute; top: 24px; left: 0; right: 0;
+    text-align: center; z-index: 20;
+    font-size: 32px; font-weight: 700; color: #fff;
+    text-shadow: 0 2px 20px rgba(0,0,0,.8), 0 0 60px rgba(59,130,246,.3);
+    pointer-events: none;
+  }
+
+  .stage {
+    flex: 1; position: relative; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at 50% 30%, #0e2240, #050c14 70%);
+  }
+  .stage video {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: contain; background: #000;
+    transition: opacity .4s ease;
+  }
+  .stage video.hidden { opacity: 0; pointer-events: none; }
+
+  .subtitles {
+    position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
+    max-width: 80%; text-align: center; z-index: 10;
+    pointer-events: none;
+  }
+  .subtitles .text {
+    display: inline-block;
+    padding: 14px 32px; border-radius: 12px;
+    background: rgba(0,0,0,.75); backdrop-filter: blur(8px);
+    font-size: 28px; font-weight: 600; line-height: 1.4;
+    color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,.8);
+    opacity: 0; transition: opacity .35s ease;
+  }
+  .subtitles .text.visible { opacity: 1; }
+
+  .bottom-bar {
+    height: 180px; min-height: 180px;
+    background: #0c1520; border-top: 1px solid #1c2e42;
+    display: flex; align-items: stretch;
+  }
+  .bar-qr {
+    width: 180px; padding: 12px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    border-right: 1px solid #1c2e42;
+  }
+  .bar-qr img { width: 110px; height: 110px; border-radius: 8px; }
+  .bar-qr .code { font-size: 20px; font-weight: 900; letter-spacing: .12em; color: #3b82f6; }
+
+  .bar-guests { flex: 1; padding: 12px 20px; overflow-y: auto; }
+  .bar-guests h3 {
+    font-size: 12px; font-weight: 500; color: #5d7286;
+    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px;
+  }
+  .guests-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .guest-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 12px; border-radius: 999px;
+    background: #142336; border: 1px solid #1c2e42; font-size: 13px;
+  }
+  .guest-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: #3fbf8f; }
+  .guest-chip.greeted .dot { background: #5d7286; }
+  .guest-chip.greeted { color: #5d7286; }
+  .empty-state { color: #3b5068; font-size: 13px; padding: 8px 0; }
+</style>
+</head>
+<body>
+  <div class="welcome-title" id="welcome-title">Добро пожаловать на вечер</div>
+
+  <div class="stage">
+    <video id="vAwait" src="/static/videos/awaiting.mp4?v={{ build }}" autoplay loop muted playsinline preload="auto"></video>
+    <video id="vSpeak" class="hidden" src="/static/videos/speaking.mp4?v={{ build }}" loop muted playsinline preload="auto"></video>
+    <div class="subtitles"><div class="text" id="subtitle-text"></div></div>
+  </div>
+
+  <div class="bottom-bar">
+    <div class="bar-qr">
+      <img src="/qr?code={{ code }}" alt="QR">
+      <div class="code">{{ code }}</div>
+    </div>
+    <div class="bar-guests">
+      <h3>Гости (<span id="guest-count">0</span>)</h3>
+      <div class="guests-grid" id="guests-list">
+        <div class="empty-state">Пока никто не подключился</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const vAwait = document.getElementById('vAwait');
+const vSpeak = document.getElementById('vSpeak');
+const guestsList = document.getElementById('guests-list');
+const subtitleText = document.getElementById('subtitle-text');
+const welcomeTitle = document.getElementById('welcome-title');
+let currentAudio = null;
+
+function showSubtitle(text) {
+  subtitleText.textContent = text;
+  subtitleText.classList.add('visible');
+}
+function hideSubtitle() { subtitleText.classList.remove('visible'); }
+
+function showSpeak() {
+  vAwait.classList.add('hidden');
+  vSpeak.classList.remove('hidden');
+  vSpeak.currentTime = 0;
+  vSpeak.play();
+}
+function showAwait() {
+  vSpeak.classList.add('hidden');
+  vAwait.classList.remove('hidden');
+  vAwait.play();
+}
+
+async function refreshGuests() {
+  try {
+    const res = await fetch('/api/guests');
+    const data = await res.json();
+    document.getElementById('guest-count').textContent = data.count;
+    if (data.guests.length === 0) {
+      guestsList.innerHTML = '<div class="empty-state">Пока никто не подключился</div>';
+      return;
+    }
+    guestsList.innerHTML = data.guests.map(g =>
+      `<div class="guest-chip ${g.greeted ? 'greeted' : ''}"><span class="dot"></span>${esc(g.name)}</div>`
+    ).join('');
+  } catch (e) {}
+}
+
+setInterval(refreshGuests, 2000);
+refreshGuests();
+
+// --- BroadcastChannel: принимаем команды от админки ---
+const bc = new BroadcastChannel('avatar-host');
+bc.onmessage = (e) => {
+  const d = e.data;
+  if (d.action === 'speak') {
+    playAudio(d.audio_url, d.text);
+  } else if (d.action === 'await') {
+    stopAudio();
+  } else if (d.action === 'refresh') {
+    refreshGuests();
+  } else if (d.action === 'subtitle') {
+    showSubtitle(d.text);
+  } else if (d.action === 'title') {
+    welcomeTitle.textContent = d.text;
+  }
+};
+
+function playAudio(url, text) {
+  stopAudio();
+  showSpeak();
+  if (text) showSubtitle(text);
+
+  const audio = new Audio(url);
+  currentAudio = audio;
+
+  audio.play().then(() => {
+    audio.onended = () => { stopAudio(); bc.postMessage({ action: 'done' }); };
+    audio.onerror = () => { stopAudio(); bc.postMessage({ action: 'done' }); };
+  }).catch(() => {
+    setTimeout(() => { stopAudio(); bc.postMessage({ action: 'done' }); }, 5000);
+  });
+}
+
+function stopAudio() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio = null;
+  }
+  hideSubtitle();
+  showAwait();
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+</script>
+</body>
+</html>
