@@ -1,0 +1,48 @@
+[
+  {
+    "id": "time",
+    "name": "Который час",
+    "author": "Дуся",
+    "description": "Отвечает текущим временем устройства.",
+    "phrases": ["который час", "сколько времени", "время"],
+    "action": "time",
+    "builtin": true
+  },
+  {
+    "id": "date",
+    "name": "Какое сегодня число",
+    "author": "Дуся",
+    "description": "Называет сегодняшнюю дату.",
+    "phrases": ["какое сегодня число", "какая дата", "сегодня"],
+    "action": "date",
+    "builtin": true
+  },
+  {
+    "id": "weather",
+    "name": "Погода (эмуляция)",
+    "author": "Дуся",
+    "description": "Офлайн-заглушка погоды — без сети.",
+    "phrases": ["погода", "какая погода"],
+    "action": "weather",
+    "builtin": true
+  },
+  {
+    "id": "http",
+    "name": "HTTP-запрос",
+    "author": "Дуся",
+    "description": "Пример плагина с fetch. Скажите «пинг сервис».",
+    "phrases": ["пинг сервис", "проверь интернет"],
+    "action": "http",
+    "url": "https://httpbin.org/get",
+    "builtin": false
+  },
+  {
+    "id": "open",
+    "name": "Открыть приложение",
+    "author": "Дуся",
+    "description": "Пытается открыть URL/схему: скажите «открой карты».",
+    "phrases": ["открой карты", "открой почту", "открой приложение"],
+    "action": "open",
+    "builtin": false
+  }
+]
