@@ -1,252 +1,552 @@
 # -*- coding: utf-8 -*-
 """
-Аватар-хост: говорящий аватар с приёмом гостей по QR-коду.
-Озвучивает текст нейро-голосами Microsoft (edge-tts).
-Гости сканируют QR, вводят имя, аватар здоровается по имени.
-"""
-import os
-import io
-import time
-import asyncio
-import secrets
-import string
+Аватар-хост v4.0.0 — говорящий аватар-ведущий мероприятия.
 
-import edge_tts
+Что нового против 3.1.0:
+- SSE вместо BroadcastChannel: админка на планшете, экран на проекторе, гости на телефонах;
+- серверная очередь речи: реплики не накладываются;
+- офлайн-фолбэк синтеза (tts.py), автоочистка static/audio;
+- фазы вечера, конкурс с ответами и рейтингом;
+- демо-гости и сценарий «выдуманного вечера» для репетиции без людей.
+"""
+import io
+import os
+import json
+import time
+import queue
+import random
+import threading
+
 import qrcode
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, Response, jsonify, render_template, request, send_file
+
+import tts
+from event_state import EVENT, new_token, public_guest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
-os.makedirs(AUDIO_DIR, exist_ok=True)
-
-BUILD = "3.0.0"
+BUILD = "4.0.0"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
-# --- Голоса ---
-VOICES = [
-    {"id": "ru-RU-DmitryNeural",   "label": "Дмитрий (мужской)"},
-    {"id": "ru-RU-SvetlanaNeural", "label": "Светлана (женский)"},
-    {"id": "ru-RU-DariyaNeural",   "label": "Дарья (женский)"},
-]
-
 PRESETS = [
-    "Привет! Меня зовут Аватар, и я рад с вами познакомиться.",
-    "Сегодня отличный день, чтобы попробовать что-то новое.",
-    "Обратите внимание: это полностью рабочий прототип с синтезом речи.",
-    "Спасибо, что слушаете. До новых встреч!",
+    "Дорогие гости, рассаживайтесь — через пару минут начинаем!",
+    "А теперь прошу тишины: слово нашим дорогим родителям.",
+    "Объявляется музыкальная пауза. Танцпол ждёт!",
+    "Спасибо, что были с нами. Этот вечер удался благодаря вам!",
 ]
 
-# --- Хранилище гостей (in-memory) ---
-# Коды доступа: code -> {created_at}
-access_codes = {}
-# Гости: token -> {name, joined_at, greeted}
-guests = {}
-# Сессии: session_id -> {role, guest_token}
-sessions = {}
-# Заголовок экрана
-screen_title = "Добро пожаловать на вечер"
+def plural(n, one, few, many):
+    """Русские числительные: 1 гость, 2 гостя, 5 гостей."""
+    n = abs(int(n))
+    if 11 <= n % 100 <= 14:
+        return many
+    return {1: one, 2: few, 3: few, 4: few}.get(n % 10, many)
 
 
-def generate_access_code():
-    """5-значный код без неоднозначных символов (аналог kviz-live)."""
-    alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-    return "".join(secrets.choice(alphabet) for _ in range(5))
+DEMO_NAMES = [
+    "Анна", "Игорь", "Мария и Сергей", "Пётр Ильич", "Ольга",
+    "Тимур", "Лена", "Виктор Степанович", "Даша", "Костя",
+]
 
 
-def generate_token():
-    """Токен для авторизации."""
-    return secrets.token_hex(16)
+# ---------------------------------------------------------------- очередь речи
+
+def speech_worker():
+    """Единственный поток, который синтезирует и выдаёт команды на экран."""
+    while True:
+        item = EVENT.pop_next()
+        if not item:
+            time.sleep(0.15)
+            continue
+        try:
+            result = tts.synth(
+                item["text"], item.get("voice") or EVENT.voice,
+                item.get("rate", EVENT.rate), item.get("pitch", EVENT.pitch),
+            )
+        except Exception as e:
+            EVENT.bus.publish("error", {"message": f"Синтез не удался: {e}"})
+            EVENT.finish_current(item["id"])
+            continue
+
+        EVENT.bus.publish("speak", {
+            "id": item["id"],
+            "text": item["text"],
+            "kind": item["kind"],
+            "audio_url": result["url"],
+            "duration": result["duration"],
+            "engine": result["engine"],
+            "note": result["note"],
+        })
+        EVENT.bus.publish("queue", EVENT.queue_snapshot())
+
+        # Страховка: если экран не отчитался (закрыли вкладку) — освобождаем очередь сами.
+        deadline = time.time() + result["duration"] + 6
+        while time.time() < deadline:
+            if EVENT.now_speaking is None or EVENT.now_speaking["id"] != item["id"]:
+                break
+            time.sleep(0.2)
+        else:
+            EVENT.finish_current(item["id"])
+            EVENT.bus.publish("idle", {})
 
 
-def get_or_create_code():
-    """Получить текущий код или создать новый (если нет или истёк)."""
-    now = time.time()
-    # Удаляем старые коды (> 1 часа)
-    expired = [c for c, v in access_codes.items() if now - v["created_at"] > 3600]
-    for c in expired:
-        del access_codes[c]
-    # Возвращаем существующий или создаём новый
-    if access_codes:
-        return list(access_codes.keys())[0]
-    code = generate_access_code()
-    access_codes[code] = {"created_at": now}
-    return code
+def cleanup_worker():
+    while True:
+        tts.cleanup()
+        time.sleep(600)
 
 
-# --- Маршруты ---
+threading.Thread(target=speech_worker, daemon=True).start()
+threading.Thread(target=cleanup_worker, daemon=True).start()
+
+
+def say(text, kind="say", priority=5, guest=None):
+    text = (text or "").strip()
+    if not text:
+        return None
+    return EVENT.enqueue({"text": text, "kind": kind, "priority": priority, "guest": guest})
+
+
+# ---------------------------------------------------------------- страницы
 
 @app.route("/")
 def index():
-    return render_template("index.html", voices=VOICES, presets=PRESETS, build=BUILD)
+    return render_template("index.html", voices=tts.VOICES, presets=PRESETS, build=BUILD)
 
 
 @app.route("/host")
 def host():
-    code = get_or_create_code()
-    return render_template("host.html", code=code, build=BUILD)
+    return render_template("host.html", code=EVENT.code, build=BUILD)
 
 
 @app.route("/admin")
 def admin():
-    code = get_or_create_code()
-    return render_template("admin.html", code=code, build=BUILD)
+    return render_template("admin.html", code=EVENT.code, build=BUILD,
+                           voices=tts.VOICES, presets=PRESETS)
 
 
 @app.route("/connect")
 def connect():
-    code = request.args.get("code", "").upper()
-    return render_template("connect.html", code=code, build=BUILD)
+    return render_template("connect.html", code=request.args.get("code", "").upper(), build=BUILD)
 
 
 @app.route("/qr")
 def qr():
-    """Генерирует QR-код PNG со ссылкой на /connect?code=XXXXX."""
-    code = request.args.get("code", "")
-    if not code:
-        return "нужен ?code=", 400
-    # Формируем URL для подключения
-    host = request.host
-    url = f"http://{host}/connect?code={code}"
-    # Генерируем QR
-    qr_img = qrcode.make(url, box_size=10, border=2)
+    code = request.args.get("code") or EVENT.code
+    base = request.headers.get("X-Forwarded-Host") or request.host
+    scheme = request.headers.get("X-Forwarded-Proto") or request.scheme
+    url = f"{scheme}://{base}/connect?code={code}"
+    img = qrcode.make(url, box_size=10, border=2)
     buf = io.BytesIO()
-    qr_img.save(buf, format="PNG")
+    img.save(buf, format="PNG")
     buf.seek(0)
-    return send_file(buf, mimetype="image/png")
+    resp = send_file(buf, mimetype="image/png")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
-# --- API для синтеза речи (оставляем как было) ---
+# ---------------------------------------------------------------- SSE
 
-@app.route("/api/voices")
-def api_voices():
-    return jsonify(VOICES)
+@app.route("/api/stream")
+def api_stream():
+    q = EVENT.bus.subscribe()
 
+    def gen():
+        try:
+            yield sse("hello", EVENT.snapshot())
+            while True:
+                try:
+                    msg = q.get(timeout=15)
+                    yield sse(msg["event"], msg["data"])
+                except queue.Empty:
+                    yield ": ping\n\n"
+        finally:
+            EVENT.bus.unsubscribe(q)
 
-@app.route("/api/say", methods=["POST"])
-def api_say():
-    data = request.get_json(force=True, silent=True) or {}
-    text = (data.get("text") or "").strip()
-    voice = data.get("voice") or "ru-RU-DmitryNeural"
-
-    if not text:
-        return jsonify({"error": "Пустой текст"}), 400
-    if voice not in [v["id"] for v in VOICES]:
-        voice = "ru-RU-DmitryNeural"
-
-    ts = int(time.time() * 1000)
-    audio_name = f"speech_{ts}.mp3"
-    audio_path = os.path.join(AUDIO_DIR, audio_name)
-
-    async def synth():
-        parts = []
-        comm = edge_tts.Communicate(text=text, voice=voice)
-        async for chunk in comm.stream():
-            if chunk["type"] == "audio":
-                parts.append(chunk["data"])
-        with open(audio_path, "wb") as f:
-            f.write(b"".join(parts))
-
-    try:
-        asyncio.run(synth())
-    except Exception as e:
-        return jsonify({"error": f"Синтез не удался: {e}"}), 500
-
-    return jsonify({
-        "audio_url": f"/static/audio/{audio_name}",
-        "video_url": "/static/videos/speaking.mp4?build=" + BUILD,
-        "build": BUILD,
+    return Response(gen(), mimetype="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
     })
 
 
-# --- API для приёма гостей ---
+def sse(event, data):
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# ---------------------------------------------------------------- состояние
+
+@app.route("/api/state")
+def api_state():
+    s = EVENT.snapshot()
+    s.update(build=BUILD, engine_note=tts.engine_note(), listeners=EVENT.bus.listeners)
+    return jsonify(s)
+
+
+@app.route("/api/voices")
+def api_voices():
+    return jsonify(tts.VOICES)
+
+
+@app.route("/api/settings", methods=["POST"])
+def api_settings():
+    d = request.get_json(force=True, silent=True) or {}
+    with EVENT.lock:
+        for field in ("title", "subtitle", "greeting_template", "voice"):
+            if field in d and isinstance(d[field], str) and d[field].strip():
+                setattr(EVENT, field, d[field].strip())
+        for field in ("rate", "pitch", "guest_limit"):
+            if field in d:
+                try:
+                    setattr(EVENT, field, int(d[field]))
+                except (TypeError, ValueError):
+                    pass
+        if "accepting" in d:
+            EVENT.accepting = bool(d["accepting"])
+        if d.get("phase") in EVENT.PHASES:
+            EVENT.phase = d["phase"]
+    EVENT.bus.publish("state", EVENT.snapshot())
+    return jsonify(EVENT.snapshot())
+
+
+@app.route("/api/reset", methods=["POST"])
+def api_reset():
+    EVENT.reset()
+    EVENT.bus.publish("state", EVENT.snapshot())
+    return jsonify(EVENT.snapshot())
+
+
+# ---------------------------------------------------------------- речь
+
+@app.route("/api/say", methods=["POST"])
+def api_say():
+    d = request.get_json(force=True, silent=True) or {}
+    text = (d.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "Пустой текст"}), 400
+    items = []
+    for part in tts.split_text(text):
+        items.append(say(part, kind=d.get("kind", "say"), priority=int(d.get("priority", 5))))
+    return jsonify({"queued": [i["id"] for i in items if i], "queue": EVENT.queue_snapshot()})
+
+
+@app.route("/api/tts/preview", methods=["POST"])
+def api_tts_preview():
+    """Прямой синтез в обход очереди — только для тестового режима."""
+    d = request.get_json(force=True, silent=True) or {}
+    try:
+        return jsonify(tts.synth(d.get("text", ""), d.get("voice") or EVENT.voice,
+                                 int(d.get("rate", 0)), int(d.get("pitch", 0))))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/speech/done", methods=["POST"])
+def api_speech_done():
+    d = request.get_json(force=True, silent=True) or {}
+    EVENT.finish_current(d.get("id"))
+    EVENT.bus.publish("idle", {})
+    return jsonify({"ok": True, "queue": EVENT.queue_snapshot()})
+
+
+@app.route("/api/speech/skip", methods=["POST"])
+def api_speech_skip():
+    EVENT.finish_current()
+    EVENT.bus.publish("stop", {})
+    return jsonify({"ok": True, "queue": EVENT.queue_snapshot()})
+
+
+@app.route("/api/speech/clear", methods=["POST"])
+def api_speech_clear():
+    with EVENT.lock:
+        EVENT.speech_queue.clear()
+    EVENT.finish_current()
+    EVENT.bus.publish("stop", {})
+    return jsonify({"ok": True, "queue": EVENT.queue_snapshot()})
+
+
+# ---------------------------------------------------------------- гости
 
 @app.route("/api/guest/connect", methods=["POST"])
 def api_guest_connect():
-    """Обмен 5-значного кода на токен (аналог playerConnect в kviz-live)."""
-    data = request.get_json(force=True, silent=True) or {}
-    code = (data.get("code") or "").strip().upper()
-
-    if not code:
-        return jsonify({"error": "Введите код"}), 400
-    if code not in access_codes:
-        return jsonify({"error": "Игра с таким кодом не найдена"}), 404
-
-    token = generate_token()
-    sessions[token] = {"role": "guest", "guest_token": None}
-    return jsonify({"accessToken": token})
+    d = request.get_json(force=True, silent=True) or {}
+    code = (d.get("code") or "").strip().upper()
+    if code != EVENT.code:
+        return jsonify({"error": "Мероприятие с таким кодом не найдено"}), 404
+    if not EVENT.accepting:
+        return jsonify({"error": "Приём гостей закрыт"}), 403
+    token = new_token()
+    EVENT.sessions[token] = {"guest_token": None}
+    return jsonify({"accessToken": token, "title": EVENT.title})
 
 
 @app.route("/api/guest/join", methods=["POST"])
 def api_guest_join():
-    """Регистрация имени по токену (аналог playerJoin в kviz-live)."""
-    data = request.get_json(force=True, silent=True) or {}
-    token = (data.get("token") or "").strip()
-    name = (data.get("name") or "").strip()
+    d = request.get_json(force=True, silent=True) or {}
+    token = (d.get("token") or "").strip()
+    if token not in EVENT.sessions:
+        return jsonify({"error": "Нет активной сессии, отсканируйте QR заново"}), 401
+    guest, err = EVENT.add_guest(d.get("name") or "", d.get("table") or "")
+    if err:
+        return jsonify({"error": err}), 409
+    EVENT.sessions[token]["guest_token"] = guest["token"]
+    if EVENT.phase in ("idle", "welcome", "greeting"):
+        greet_guest(guest)
+    return jsonify({"accessToken": guest["token"], "name": guest["name"]})
 
-    if not token or token not in sessions:
-        return jsonify({"error": "Нет активной сессии"}), 401
-    if not name:
-        return jsonify({"error": "Введите имя"}), 400
 
-    # Проверяем, не занято ли имя
-    name_lower = name.lower()
-    for g in guests.values():
-        if g["name"].lower() == name_lower:
-            return jsonify({"error": "Это имя уже занято"}), 409
-
-    # Создаём гостя
-    guest_token = generate_token()
-    guests[guest_token] = {
-        "name": name,
-        "joined_at": time.time(),
-        "greeted": False,
-    }
-
-    # Обновляем сессию
-    sessions[token]["guest_token"] = guest_token
-
-    return jsonify({
-        "accessToken": guest_token,
-        "playerId": guest_token,
-        "name": name,
-    })
+def greet_guest(guest):
+    text = EVENT.greeting_template.replace("{name}", guest["name"])
+    if guest.get("table"):
+        text += f" Ваше место — {guest['table']}."
+    with EVENT.lock:
+        guest["greeted"] = True
+        EVENT.phase = "greeting" if EVENT.phase == "idle" else EVENT.phase
+    EVENT.bus.publish("guest_greeted", {"guest": public_guest(guest)})
+    return say(text, kind="greeting", priority=1, guest=guest["token"])
 
 
 @app.route("/api/guests")
 def api_guests():
-    """Список гостей (для экрана ведущего)."""
-    guest_list = [
-        {"token": t, "name": g["name"], "joined_at": g["joined_at"], "greeted": g["greeted"]}
-        for t, g in guests.items()
-    ]
-    guest_list.sort(key=lambda x: x["joined_at"])
-    return jsonify({
-        "guests": guest_list,
-        "count": len(guest_list),
-    })
+    return jsonify({"guests": EVENT.guest_list(), "count": EVENT.guest_count})
 
 
 @app.route("/api/guest/greet", methods=["POST"])
 def api_guest_greet():
-    """Отметить гостя как приветствованного."""
-    data = request.get_json(force=True, silent=True) or {}
-    token = (data.get("token") or "").strip()
+    d = request.get_json(force=True, silent=True) or {}
+    token = (d.get("token") or "").strip()
+    guest = EVENT.guests.get(token)
+    if not guest:
+        return jsonify({"error": "Гость не найден"}), 404
+    greet_guest(guest)
+    return jsonify({"ok": True})
 
-    if token in guests:
-        guests[token]["greeted"] = True
-        return jsonify({"ok": True})
-    return jsonify({"error": "Гость не найден"}), 404
+
+@app.route("/api/guest/me")
+def api_guest_me():
+    token = request.args.get("token", "")
+    guest = EVENT.guests.get(token)
+    if not guest:
+        return jsonify({"error": "Гость не найден"}), 404
+    return jsonify({
+        "guest": public_guest(guest),
+        "quiz": EVENT.quiz_public(),
+        "phase": EVENT.phase,
+        "title": EVENT.title,
+    })
 
 
-# --- Запуск ---
+# ---------------------------------------------------------------- конкурс
+
+@app.route("/api/quiz/start", methods=["POST"])
+def api_quiz_start():
+    d = request.get_json(force=True, silent=True) or {}
+    question = (d.get("question") or "").strip()
+    options = [o.strip() for o in (d.get("options") or []) if o.strip()]
+    if not question or len(options) < 2:
+        return jsonify({"error": "Нужен вопрос и минимум два варианта"}), 400
+    snap = EVENT.start_quiz(question, options, int(d.get("seconds", 30)))
+    letters = "АБВГД"
+    spoken = question + " Варианты: " + "; ".join(
+        f"{letters[i]} — {o}" for i, o in enumerate(options)
+    ) + ". Отвечайте на телефонах!"
+    say(spoken, kind="quiz", priority=2)
+    return jsonify(snap)
+
+
+@app.route("/api/quiz/answer", methods=["POST"])
+def api_quiz_answer():
+    d = request.get_json(force=True, silent=True) or {}
+    snap, err = EVENT.answer_quiz((d.get("token") or "").strip(), int(d.get("index", -1)))
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify(snap)
+
+
+@app.route("/api/quiz/close", methods=["POST"])
+def api_quiz_close():
+    d = request.get_json(force=True, silent=True) or {}
+    correct = d.get("correct")
+    snap = EVENT.close_quiz(int(correct) if correct is not None else None)
+    if not snap:
+        return jsonify({"error": "Конкурс не запущен"}), 400
+    if snap["correct"] is not None:
+        winners = snap["tally"][snap["correct"]]
+        say(
+            f"Правильный ответ — {snap['options'][snap['correct']]}. "
+            f"Угадали {winners} {plural(winners, 'человек', 'человека', 'человек')}. Аплодисменты!",
+            kind="quiz", priority=2,
+        )
+    return jsonify(snap)
+
+
+@app.route("/api/leaderboard")
+def api_leaderboard():
+    return jsonify({"rows": EVENT.leaderboard()})
+
+
+# ---------------------------------------------------------------- демо-режим
+
+@app.route("/api/demo/guests", methods=["POST"])
+def api_demo_guests():
+    """Наливаем выдуманных гостей — репетиция без живых людей."""
+    d = request.get_json(force=True, silent=True) or {}
+    count = max(1, min(int(d.get("count", 5)), 40))
+    greet = bool(d.get("greet", False))
+    added = []
+    pool = list(DEMO_NAMES)
+    random.shuffle(pool)
+    for i in range(count):
+        base = pool[i % len(pool)]
+        name = base if i < len(pool) else f"{base} {i // len(pool) + 1}"
+        guest, err = EVENT.add_guest(name, table=f"стол {i % 6 + 1}")
+        if guest:
+            guest["demo"] = True
+            added.append(guest["name"])
+            if greet:
+                greet_guest(guest)
+    return jsonify({"added": added, "count": EVENT.guest_count})
+
+
+@app.route("/api/demo/answers", methods=["POST"])
+def api_demo_answers():
+    """Демо-гости отвечают на текущий вопрос."""
+    snap = EVENT.quiz_public()
+    if not snap or not snap["open"]:
+        return jsonify({"error": "Конкурс не запущен"}), 400
+    n = 0
+    for token, g in list(EVENT.guests.items()):
+        if g.get("demo") and random.random() < 0.85:
+            EVENT.answer_quiz(token, random.randrange(len(snap["options"])))
+            n += 1
+    return jsonify({"answered": n, "quiz": EVENT.quiz_public()})
+
+
+SCENARIO_STATE = {"running": False, "step": "", "log": []}
+
+
+def scenario_log(step):
+    SCENARIO_STATE["step"] = step
+    SCENARIO_STATE["log"].append({"at": time.time(), "step": step})
+    EVENT.bus.publish("scenario", {"step": step, "running": SCENARIO_STATE["running"]})
+
+
+def wait_quiet(timeout=90):
+    """Ждём, пока аватар договорит всю очередь."""
+    end = time.time() + timeout
+    while time.time() < end:
+        snap = EVENT.queue_snapshot()
+        if not snap["pending"] and not snap["speaking"]:
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def run_scenario(fast=False):
+    """Сценарий выдуманного вечера — юбилей. Прогон целиком, без людей."""
+    pause = (lambda s: time.sleep(0.2 if fast else s))
+    try:
+        SCENARIO_STATE["running"] = True
+        SCENARIO_STATE["log"] = []
+        EVENT.reset()
+
+        with EVENT.lock:
+            EVENT.title = "Юбилей Марии Петровны — 50 лет"
+            EVENT.subtitle = "Сканируйте QR и представьтесь"
+            EVENT.greeting_template = "{name}, добро пожаловать! Мария Петровна вас уже ждёт."
+            EVENT.phase = "welcome"
+        EVENT.bus.publish("state", EVENT.snapshot())
+
+        scenario_log("1. Сбор гостей")
+        say("Добрый вечер! Я ваш электронный ведущий. Отсканируйте QR-код на экране "
+            "и представьтесь — я поздороваюсь с каждым лично.", kind="say", priority=3)
+        wait_quiet()
+
+        scenario_log("2. Гости заходят и получают приветствие")
+        pool = list(DEMO_NAMES)
+        random.shuffle(pool)
+        for i, name in enumerate(pool[:6]):
+            guest, err = EVENT.add_guest(name, table=f"стол {i % 3 + 1}")
+            if guest:
+                guest["demo"] = True
+                greet_guest(guest)
+            pause(1.2)   # гости заходят внахлёст — проверяем очередь
+        wait_quiet()
+
+        scenario_log("3. Официальное открытие")
+        with EVENT.lock:
+            EVENT.phase = "welcome"
+            EVENT.accepting = False
+        EVENT.bus.publish("state", EVENT.snapshot())
+        n = EVENT.guest_count
+        say(f"Все в сборе: сегодня с нами {n} {plural(n, 'гость', 'гостя', 'гостей')}. "
+            "Прошу поднять бокалы за нашу именинницу!", priority=3)
+        wait_quiet()
+
+        scenario_log("4. Конкурс: вопрос про именинницу")
+        EVENT.start_quiz(
+            "В каком городе Мария Петровна встретила своего мужа?",
+            ["Казань", "Йошкар-Ола", "Сочи"], seconds=20,
+        )
+        say("Внимание, конкурс! В каком городе Мария Петровна встретила своего мужа? "
+            "Варианты: А — Казань, Б — Йошкар-Ола, В — Сочи.", kind="quiz", priority=2)
+        wait_quiet()
+        for token, g in list(EVENT.guests.items()):
+            if g.get("demo"):
+                EVENT.answer_quiz(token, random.choice([0, 1, 1, 1, 2]))
+                pause(0.4)
+        snap = EVENT.close_quiz(correct=1)
+        w = snap['tally'][1]
+        say(f"Правильный ответ — Йошкар-Ола! Угадали {w} {plural(w, 'человек', 'человека', 'человек')}.",
+            kind="quiz", priority=2)
+        wait_quiet()
+
+        scenario_log("5. Итоги и финал")
+        with EVENT.lock:
+            EVENT.phase = "finale"
+        top = EVENT.leaderboard(3)
+        if top:
+            say("Лидеры нашего вечера: " + ", ".join(
+                f"{r['name']} — {r['score']}" for r in top) + ".", priority=3)
+        say("Спасибо, что были сегодня с нами! Танцпол открыт, а я остаюсь на связи.",
+            priority=3)
+        wait_quiet()
+        scenario_log("Готово")
+    except Exception as e:
+        scenario_log(f"Ошибка сценария: {e}")
+    finally:
+        SCENARIO_STATE["running"] = False
+        EVENT.bus.publish("scenario", {"step": SCENARIO_STATE["step"], "running": False})
+
+
+@app.route("/api/demo/scenario", methods=["POST"])
+def api_demo_scenario():
+    if SCENARIO_STATE["running"]:
+        return jsonify({"error": "Сценарий уже идёт"}), 409
+    fast = bool((request.get_json(force=True, silent=True) or {}).get("fast"))
+    threading.Thread(target=run_scenario, args=(fast,), daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/demo/scenario/state")
+def api_demo_scenario_state():
+    return jsonify(SCENARIO_STATE)
+
+
+@app.route("/api/health")
+def api_health():
+    return jsonify({
+        "ok": True, "build": BUILD, "listeners": EVENT.bus.listeners,
+        "engine_note": tts.engine_note(), "guests": EVENT.guest_count,
+        "queue": EVENT.queue_snapshot(),
+    })
+
 
 PORT = int(os.environ.get("PORT", 8000))
 
 if __name__ == "__main__":
     print(f"\n=== Аватар-хост v{BUILD} ===")
-    print(f"\n  Экран (публичный):  http://localhost:{PORT}/host")
-    print(f"  Панель управления:   http://localhost:{PORT}/admin")
-    print(f"  Вход для гостя:     http://localhost:{PORT}/connect?code=XXXXX")
-    print(f"  Тестовый режим:     http://localhost:{PORT}/\n")
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    print(f"  Экран:    http://localhost:{PORT}/host")
+    print(f"  Админка:  http://localhost:{PORT}/admin")
+    print(f"  Гость:    http://localhost:{PORT}/connect?code={EVENT.code}\n")
+    app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)

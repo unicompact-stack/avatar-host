@@ -3,192 +3,179 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Аватар-хост</title>
+<title>Аватар-хост — экран</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #000; color: #e8eef5;
-    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    overflow: hidden; height: 100vh; display: flex; flex-direction: column;
+    background:#000; color:#e8eef5;
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow:hidden; height:100vh; display:flex; flex-direction:column;
   }
+  .welcome-title{position:absolute;top:20px;left:0;right:0;text-align:center;z-index:20;
+    font-size:34px;font-weight:700;color:#fff;text-shadow:0 2px 20px rgba(0,0,0,.8);pointer-events:none}
+  .welcome-sub{position:absolute;top:64px;left:0;right:0;text-align:center;z-index:20;
+    font-size:17px;color:#8fa9c4;pointer-events:none}
+  .stage{flex:1;position:relative;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at 50% 30%,#0e2240,#050c14 70%)}
+  .stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;transition:opacity .4s ease}
+  .stage video.hidden{opacity:0;pointer-events:none}
+  .subtitles{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);max-width:82%;text-align:center;z-index:10;pointer-events:none}
+  .subtitles .text{display:inline-block;padding:14px 32px;border-radius:12px;background:rgba(0,0,0,.75);
+    backdrop-filter:blur(8px);font-size:28px;font-weight:600;line-height:1.4;color:#fff;opacity:0;transition:opacity .35s}
+  .subtitles .text.visible{opacity:1}
 
-  .welcome-title {
-    position: absolute; top: 24px; left: 0; right: 0;
-    text-align: center; z-index: 20;
-    font-size: 32px; font-weight: 700; color: #fff;
-    text-shadow: 0 2px 20px rgba(0,0,0,.8), 0 0 60px rgba(59,130,246,.3);
-    pointer-events: none;
-  }
+  .quiz-card{position:absolute;inset:auto 6% 90px 6%;z-index:15;background:rgba(8,18,32,.92);
+    border:1px solid #23405f;border-radius:18px;padding:22px 26px;display:none}
+  .quiz-card.on{display:block}
+  .quiz-card h2{font-size:28px;margin-bottom:14px}
+  .quiz-opts{display:flex;gap:12px;flex-wrap:wrap}
+  .quiz-opt{flex:1;min-width:160px;background:#12243a;border:1px solid #24405e;border-radius:12px;padding:12px 14px;font-size:19px;position:relative;overflow:hidden}
+  .quiz-opt.correct{border-color:#3fbf8f;background:#123326}
+  .quiz-opt .bar{position:absolute;inset:0 auto 0 0;background:rgba(59,130,246,.25);width:0;transition:width .4s}
+  .quiz-opt span{position:relative}
+  .quiz-meta{margin-top:12px;color:#8fa9c4;font-size:15px}
 
-  .stage {
-    flex: 1; position: relative; display: flex; align-items: center; justify-content: center;
-    background: radial-gradient(ellipse at 50% 30%, #0e2240, #050c14 70%);
-  }
-  .stage video {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    object-fit: contain; background: #000;
-    transition: opacity .4s ease;
-  }
-  .stage video.hidden { opacity: 0; pointer-events: none; }
+  .bottom-bar{height:180px;min-height:180px;background:#0c1520;border-top:1px solid #1c2e42;display:flex}
+  .bar-qr{width:190px;padding:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid #1c2e42}
+  .bar-qr img{width:112px;height:112px;border-radius:8px;background:#fff}
+  .bar-qr .code{font-size:22px;font-weight:900;letter-spacing:.12em;color:#3b82f6}
+  .bar-qr .closed{color:#e0864f;font-size:12px}
+  .bar-guests{flex:1;padding:12px 20px;overflow-y:auto}
+  .bar-guests h3{font-size:12px;color:#5d7286;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+  .guests-grid{display:flex;flex-wrap:wrap;gap:6px}
+  .guest-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:999px;
+    background:#142336;border:1px solid #1c2e42;font-size:13px;animation:pop .35s}
+  @keyframes pop{from{transform:scale(.7);opacity:0}to{transform:scale(1);opacity:1}}
+  .guest-chip .dot{width:7px;height:7px;border-radius:50%;background:#3fbf8f}
+  .guest-chip.greeted{color:#7c8fa3}.guest-chip.greeted .dot{background:#5d7286}
+  .empty-state{color:#3b5068;font-size:13px;padding:8px 0}
 
-  .subtitles {
-    position: absolute; bottom: 32px; left: 50%; transform: translateX(-50%);
-    max-width: 80%; text-align: center; z-index: 10;
-    pointer-events: none;
-  }
-  .subtitles .text {
-    display: inline-block;
-    padding: 14px 32px; border-radius: 12px;
-    background: rgba(0,0,0,.75); backdrop-filter: blur(8px);
-    font-size: 28px; font-weight: 600; line-height: 1.4;
-    color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,.8);
-    opacity: 0; transition: opacity .35s ease;
-  }
-  .subtitles .text.visible { opacity: 1; }
-
-  .bottom-bar {
-    height: 180px; min-height: 180px;
-    background: #0c1520; border-top: 1px solid #1c2e42;
-    display: flex; align-items: stretch;
-  }
-  .bar-qr {
-    width: 180px; padding: 12px;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
-    border-right: 1px solid #1c2e42;
-  }
-  .bar-qr img { width: 110px; height: 110px; border-radius: 8px; }
-  .bar-qr .code { font-size: 20px; font-weight: 900; letter-spacing: .12em; color: #3b82f6; }
-
-  .bar-guests { flex: 1; padding: 12px 20px; overflow-y: auto; }
-  .bar-guests h3 {
-    font-size: 12px; font-weight: 500; color: #5d7286;
-    text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px;
-  }
-  .guests-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-  .guest-chip {
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 5px 12px; border-radius: 999px;
-    background: #142336; border: 1px solid #1c2e42; font-size: 13px;
-  }
-  .guest-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: #3fbf8f; }
-  .guest-chip.greeted .dot { background: #5d7286; }
-  .guest-chip.greeted { color: #5d7286; }
-  .empty-state { color: #3b5068; font-size: 13px; padding: 8px 0; }
+  #unlock{position:fixed;inset:0;z-index:60;background:rgba(3,8,15,.94);display:none;
+    align-items:center;justify-content:center;flex-direction:column;gap:18px;cursor:pointer}
+  #unlock.on{display:flex}
+  #unlock b{font-size:30px}#unlock p{color:#8fa9c4}
+  .pill{padding:12px 28px;border-radius:999px;background:#2563eb;font-weight:700;font-size:18px}
+  #status{position:fixed;top:10px;right:14px;z-index:50;font-size:12px;color:#5d7286}
+  #status.bad{color:#e0864f}
 </style>
 </head>
 <body>
-  <div class="welcome-title" id="welcome-title">Добро пожаловать на вечер</div>
+  <div id="status">подключение…</div>
+  <div class="welcome-title" id="title">Добро пожаловать</div>
+  <div class="welcome-sub" id="subtitle-line"></div>
 
   <div class="stage">
     <video id="vAwait" src="/static/videos/awaiting.mp4?v={{ build }}" autoplay loop muted playsinline preload="auto"></video>
     <video id="vSpeak" class="hidden" src="/static/videos/speaking.mp4?v={{ build }}" loop muted playsinline preload="auto"></video>
-    <div class="subtitles"><div class="text" id="subtitle-text"></div></div>
+    <div class="quiz-card" id="quiz">
+      <h2 id="q-text"></h2>
+      <div class="quiz-opts" id="q-opts"></div>
+      <div class="quiz-meta" id="q-meta"></div>
+    </div>
+    <div class="subtitles"><div class="text" id="sub"></div></div>
   </div>
 
   <div class="bottom-bar">
     <div class="bar-qr">
-      <img src="/qr?code={{ code }}" alt="QR">
-      <div class="code">{{ code }}</div>
+      <img id="qr" src="/qr?code={{ code }}" alt="QR">
+      <div class="code" id="code">{{ code }}</div>
+      <div class="closed" id="closed" style="display:none">приём закрыт</div>
     </div>
     <div class="bar-guests">
       <h3>Гости (<span id="guest-count">0</span>)</h3>
-      <div class="guests-grid" id="guests-list">
-        <div class="empty-state">Пока никто не подключился</div>
-      </div>
+      <div class="guests-grid" id="guests"><div class="empty-state">Пока никто не подключился</div></div>
     </div>
   </div>
 
+  <div id="unlock"><b>Нажмите для запуска звука</b><p>Браузер блокирует автозвук — один клик, и экран готов</p><div class="pill">Включить звук</div></div>
+
 <script>
-const vAwait = document.getElementById('vAwait');
-const vSpeak = document.getElementById('vSpeak');
-const guestsList = document.getElementById('guests-list');
-const subtitleText = document.getElementById('subtitle-text');
-const welcomeTitle = document.getElementById('welcome-title');
-let currentAudio = null;
+const $ = id => document.getElementById(id);
+const vAwait=$('vAwait'), vSpeak=$('vSpeak');
+let audio=null, audioReady=false, currentId=null;
 
-function showSubtitle(text) {
-  subtitleText.textContent = text;
-  subtitleText.classList.add('visible');
-}
-function hideSubtitle() { subtitleText.classList.remove('visible'); }
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function showSpeak(){vAwait.classList.add('hidden');vSpeak.classList.remove('hidden');vSpeak.currentTime=0;vSpeak.play().catch(()=>{});}
+function showAwait(){vSpeak.classList.add('hidden');vAwait.classList.remove('hidden');vAwait.play().catch(()=>{});}
+function sub(t){$('sub').textContent=t;$('sub').classList.add('visible');}
+function unsub(){$('sub').classList.remove('visible');}
 
-function showSpeak() {
-  vAwait.classList.add('hidden');
-  vSpeak.classList.remove('hidden');
-  vSpeak.currentTime = 0;
-  vSpeak.play();
+// --- разблокировка автозвука ---
+function tryUnlock(){
+  const probe=new Audio();probe.muted=true;
+  probe.play().then(()=>{audioReady=true;}).catch(()=>{$('unlock').classList.add('on');});
 }
-function showAwait() {
-  vSpeak.classList.add('hidden');
-  vAwait.classList.remove('hidden');
-  vAwait.play();
-}
+$('unlock').addEventListener('click',()=>{
+  const a=new Audio();a.play().catch(()=>{});
+  audioReady=true;$('unlock').classList.remove('on');
+});
+tryUnlock();
 
-async function refreshGuests() {
-  try {
-    const res = await fetch('/api/guests');
-    const data = await res.json();
-    document.getElementById('guest-count').textContent = data.count;
-    if (data.guests.length === 0) {
-      guestsList.innerHTML = '<div class="empty-state">Пока никто не подключился</div>';
-      return;
-    }
-    guestsList.innerHTML = data.guests.map(g =>
-      `<div class="guest-chip ${g.greeted ? 'greeted' : ''}"><span class="dot"></span>${esc(g.name)}</div>`
-    ).join('');
-  } catch (e) {}
+function done(id){
+  fetch('/api/speech/done',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id})}).catch(()=>{});
+}
+function stopAudio(){ if(audio){audio.pause();audio=null;} unsub(); showAwait(); }
+
+function play(d){
+  stopAudio(); currentId=d.id; showSpeak(); if(d.text) sub(d.text);
+  audio=new Audio(d.audio_url);
+  const finish=()=>{ if(currentId===d.id){ stopAudio(); done(d.id); currentId=null; } };
+  audio.onended=finish; audio.onerror=finish;
+  audio.play().catch(()=>{ $('unlock').classList.add('on'); setTimeout(finish,(d.duration||3)*1000); });
 }
 
-setInterval(refreshGuests, 2000);
-refreshGuests();
-
-// --- BroadcastChannel: принимаем команды от админки ---
-const bc = new BroadcastChannel('avatar-host');
-bc.onmessage = (e) => {
-  const d = e.data;
-  if (d.action === 'speak') {
-    playAudio(d.audio_url, d.text);
-  } else if (d.action === 'await') {
-    stopAudio();
-  } else if (d.action === 'refresh') {
-    refreshGuests();
-  } else if (d.action === 'subtitle') {
-    showSubtitle(d.text);
-  } else if (d.action === 'title') {
-    welcomeTitle.textContent = d.text;
-  }
-};
-
-function playAudio(url, text) {
-  stopAudio();
-  showSpeak();
-  if (text) showSubtitle(text);
-
-  const audio = new Audio(url);
-  currentAudio = audio;
-
-  audio.play().then(() => {
-    audio.onended = () => { stopAudio(); bc.postMessage({ action: 'done' }); };
-    audio.onerror = () => { stopAudio(); bc.postMessage({ action: 'done' }); };
-  }).catch(() => {
-    setTimeout(() => { stopAudio(); bc.postMessage({ action: 'done' }); }, 5000);
-  });
+function renderGuests(list){
+  $('guest-count').textContent=list.length;
+  $('guests').innerHTML = list.length ? list.map(g=>
+    `<div class="guest-chip ${g.greeted?'greeted':''}"><span class="dot"></span>${esc(g.name)}${g.score?' · '+g.score:''}</div>`).join('')
+    : '<div class="empty-state">Пока никто не подключился</div>';
+}
+function renderQuiz(q){
+  if(!q){ $('quiz').classList.remove('on'); return; }
+  $('quiz').classList.add('on');
+  $('q-text').textContent=q.question;
+  const total=Math.max(1,q.answered);
+  $('q-opts').innerHTML=q.options.map((o,i)=>{
+    const w=q.open?0:Math.round(q.tally[i]/total*100);
+    return `<div class="quiz-opt ${q.correct===i?'correct':''}"><div class="bar" style="width:${w}%"></div>
+      <span>${'АБВГД'[i]} — ${esc(o)}${q.open?'':' · '+q.tally[i]}</span></div>`;
+  }).join('');
+  $('q-meta').textContent=q.open?`Ответили: ${q.answered}`:(q.correct!=null?`Правильный ответ: ${q.options[q.correct]}`:'Приём ответов закрыт');
+}
+function applyState(s){
+  $('title').textContent=s.title;
+  $('subtitle-line').textContent=s.subtitle||'';
+  $('code').textContent=s.code;
+  $('qr').src='/qr?code='+s.code+'&t='+Date.now();
+  $('closed').style.display=s.accepting?'none':'block';
+  renderGuests(s.guests||[]);
+  renderQuiz(s.quiz);
 }
 
-function stopAudio() {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio = null;
-  }
-  hideSubtitle();
-  showAwait();
+let es;
+function connect(){
+  es=new EventSource('/api/stream');
+  es.addEventListener('open',()=>{ $('status').textContent='эфир'; $('status').classList.remove('bad'); });
+  es.addEventListener('hello',e=>applyState(JSON.parse(e.data)));
+  es.addEventListener('state',e=>applyState(JSON.parse(e.data)));
+  es.addEventListener('reset',()=>location.reload());
+  es.addEventListener('speak',e=>play(JSON.parse(e.data)));
+  es.addEventListener('stop',()=>{stopAudio();currentId=null;});
+  es.addEventListener('guest_joined',e=>{ const d=JSON.parse(e.data); fetchGuests(); });
+  es.addEventListener('guest_greeted',()=>fetchGuests());
+  es.addEventListener('quiz_started',e=>renderQuiz(JSON.parse(e.data)));
+  es.addEventListener('quiz_progress',e=>renderQuiz(JSON.parse(e.data)));
+  es.addEventListener('quiz_closed',e=>{renderQuiz(JSON.parse(e.data));fetchGuests();});
+  es.onerror=()=>{ $('status').textContent='нет связи, переподключаюсь…'; $('status').classList.add('bad'); };
 }
-
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, c =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function fetchGuests(){
+  try{ const r=await fetch('/api/guests'); const d=await r.json(); renderGuests(d.guests); }catch(e){}
 }
+connect();
+// страховка на случай пропущенных событий
+setInterval(fetchGuests, 10000);
 </script>
 </body>
 </html>
