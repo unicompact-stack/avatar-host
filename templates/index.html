@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Аватар-хост</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: radial-gradient(circle at 20% 10%, #14314a, #0b1622 60%);
+    color: #e8eef5;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .wrap { display: flex; gap: 32px; align-items: center; flex-wrap: wrap; justify-content: center; max-width: 1100px; width: 100%; }
+  .stage { position: relative; width: 440px; height: 440px; flex: 0 0 auto; }
+  .stage video {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; border-radius: 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.55);
+    background: #0d1a26;
+    transition: opacity .35s ease;
+  }
+  .stage video.hidden { opacity: 0; }
+  .panel { flex: 1 1 380px; min-width: 320px; }
+  h1 { margin: 0 0 4px; font-size: 26px; font-weight: 600; }
+  .sub { color: #8fa3b8; margin: 0 0 20px; font-size: 14px; }
+  label { display: block; font-size: 13px; color: #b9c7d6; margin: 0 0 6px; }
+  textarea {
+    width: 100%; height: 110px; resize: vertical;
+    background: #12202e; color: #e8eef5; border: 1px solid #24384c;
+    border-radius: 12px; padding: 12px; font-size: 15px; line-height: 1.5;
+  }
+  textarea:focus { outline: none; border-color: #3b82f6; }
+  .row { display: flex; gap: 12px; align-items: flex-end; margin-top: 14px; flex-wrap: wrap; }
+  select {
+    flex: 1 1 180px; padding: 11px 12px; font-size: 15px;
+    background: #12202e; color: #e8eef5; border: 1px solid #24384c; border-radius: 12px;
+  }
+  button {
+    flex: 0 0 auto; padding: 12px 22px; font-size: 15px; font-weight: 600;
+    color: #fff; background: #2563eb; border: none; border-radius: 12px; cursor: pointer;
+  }
+  button:hover { background: #1d4fd7; }
+  button:disabled { background: #33465c; cursor: default; }
+  .rate { margin-top: 16px; }
+  .rate .lab { display: flex; justify-content: space-between; font-size: 13px; color: #b9c7d6; margin-bottom: 4px; }
+  .rate input[type=range] { width: 100%; accent-color: #3b82f6; }
+  .status { margin-top: 12px; font-size: 13px; color: #8fa3b8; min-height: 18px; }
+  .status.err { color: #ff7b7b; }
+  .presets { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .presets span { font-size: 12px; color: #8fa3b8; width: 100%; }
+  .chip {
+    font-size: 13px; color: #cfe0f0; background: #12202e;
+    border: 1px solid #24384c; border-radius: 999px; padding: 7px 12px; cursor: pointer;
+  }
+  .chip:hover { border-color: #3b82f6; }
+  .foot { margin-top: 20px; font-size: 11px; color: #5d7286; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="stage">
+      <video id="vAwait" src="/static/videos/awaiting.mp4?v={{ build }}" autoplay loop muted playsinline preload="auto"></video>
+      <video id="vSpeak" class="hidden" loop muted playsinline preload="auto"></video>
+    </div>
+
+    <div class="panel">
+      <h1>Аватар-хост</h1>
+      <p class="sub">Прототип с lip-sync: рот двигается в такт конкретной фразе</p>
+
+      <label for="text">Текст</label>
+      <textarea id="text" placeholder="Введите текст для озвучивания…"></textarea>
+
+      <div class="row">
+        <select id="voice">
+          {% for v in voices %}
+          <option value="{{ v.id }}">{{ v.label }}</option>
+          {% endfor %}
+        </select>
+        <button id="btn">Озвучить</button>
+      </div>
+
+      <div class="rate">
+        <div class="lab"><span>Скорость видео</span><span id="rateVal">1.0×</span></div>
+        <input type="range" id="rate" min="50" max="200" step="5" value="100">
+      </div>
+
+      <div class="status" id="status"></div>
+
+      <div class="presets">
+        <span>Заготовки фраз:</span>
+        {% for p in presets %}
+        <div class="chip" data-text="{{ p }}">{{ p[:38] }}{{ '…' if p|length > 38 }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="foot">Сборка v{{ build }} · синтез: edge-tts (Microsoft neural)</div>
+    </div>
+  </div>
+
+  <script>
+    const vAwait = document.getElementById('vAwait');
+    const vSpeak = document.getElementById('vSpeak');
+    const textEl = document.getElementById('text');
+    const voiceEl = document.getElementById('voice');
+    const rateEl = document.getElementById('rate');
+    const rateVal = document.getElementById('rateVal');
+    const btn = document.getElementById('btn');
+    const statusEl = document.getElementById('status');
+    const audio = new Audio();
+    let speaking = false;
+
+    function currentRate() {
+      return parseInt(rateEl.value, 10) / 100;   // 0.5 … 2.0
+    }
+    rateEl.addEventListener('input', () => {
+      rateVal.textContent = currentRate().toFixed(2).replace(/0$/, '') + '×';
+    });
+
+    function setStatus(msg, err) {
+      statusEl.textContent = msg || '';
+      statusEl.classList.toggle('err', !!err);
+    }
+    function showAwait() {
+      vSpeak.classList.add('hidden');
+      vAwait.classList.remove('hidden');
+      vAwait.play();
+    }
+    function showSpeak() {
+      vAwait.classList.add('hidden');
+      vSpeak.classList.remove('hidden');
+      vSpeak.currentTime = 0;
+      vSpeak.play();
+    }
+    function stopSpeaking() {
+      speaking = false;
+      audio.pause();
+      showAwait();
+      btn.disabled = false;
+      btn.textContent = 'Озвучить';
+    }
+
+    document.querySelectorAll('.chip').forEach(c => {
+      c.addEventListener('click', () => { textEl.value = c.dataset.text; });
+    });
+
+    btn.addEventListener('click', async () => {
+      const text = textEl.value.trim();
+      if (!text) { setStatus('Введите текст', true); return; }
+      if (speaking) return;
+
+      speaking = true;
+      btn.disabled = true;
+      btn.textContent = 'Генерирую…';
+      setStatus('Синтез речи + видео…');
+
+      try {
+        const res = await fetch('/api/say', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text,
+            voice: voiceEl.value
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Ошибка сервера');
+
+        const rate = currentRate();
+        setStatus('Говорю…');
+        vSpeak.src = data.video_url;
+        vSpeak.playbackRate = rate;
+        showSpeak();
+        audio.src = data.audio_url;
+        audio.playbackRate = rate;
+        audio.preservesPitch = false;   // при ускорении звучит как "быстрее человек", а не как чипманк
+        await audio.play();
+
+        audio.onended = stopSpeaking;
+        audio.onerror = () => { setStatus('Ошибка воспроизведения аудио', true); stopSpeaking(); };
+        // страховка: если по какой-то причине событие ended не сработает
+        audio.onloadedmetadata = () => {
+          setTimeout(() => { if (speaking) stopSpeaking(); }, (audio.duration / rate + 1.0) * 1000);
+        };
+      } catch (e) {
+        setStatus(e.message, true);
+        stopSpeaking();
+      }
+    });
+  </script>
+</body>
+</html>

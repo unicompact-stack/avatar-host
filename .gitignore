@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+
+# Audio (генерируется сервером)
+static/audio/
+
+# Old avatar images (не используются в v2.0)
+static/videos/avatar_source.png
+static/videos/eyes_closed.png
+static/videos/mouth_*.png
+static/videos/generated/
+
+# Logs
+*.log
+server_out.log
+server_err.log
+
+# Environment
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
