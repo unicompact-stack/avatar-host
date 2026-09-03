@@ -25,6 +25,11 @@ server_err.log
 .env
 .env.*
 
+# Node / PWA
+node_modules/
+dusya/dist/
+dusya/.svelte-kit/
+
 # IDE
 .vscode/
 .idea/
