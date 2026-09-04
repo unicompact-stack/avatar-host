@@ -1,12 +1,20 @@
 # -*- coding: utf-8 -*-
 """Дымовой прогон по живому серверу: python tests/smoke_test.py (сервер должен быть запущен)."""
-import json,time,urllib.request
+import json,time,urllib.request,http.cookiejar,urllib.parse
 B="http://127.0.0.1:8000"
+_cj=http.cookiejar.CookieJar()
+_op=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_cj))
+def _login(pin="1234"):
+    try:
+        _op.open(urllib.request.Request(B+"/admin",data=b"pin="+pin.encode(),
+            headers={"Content-Type":"application/x-www-form-urlencoded"}),timeout=20)
+    except Exception: pass
+_login()
 def call(p,d=None,m=None):
     r=urllib.request.Request(B+p,data=json.dumps(d).encode() if d is not None else None,
       headers={'Content-Type':'application/json'},method=m or ('POST' if d is not None else 'GET'))
     try:
-        with urllib.request.urlopen(r,timeout=30) as f: return f.status,json.loads(f.read())
+        with _op.open(r,timeout=30) as f: return f.status,json.loads(f.read())
     except urllib.error.HTTPError as e: return e.code,json.loads(e.read())
 ok=lambda c,m: print(("✅" if c else "❌"),m)
 
@@ -53,5 +61,5 @@ ok(s==200 and d["duration"]>5,f"длинный текст: {d['engine']} {d['dur
 call("/api/settings",{"title":"Свадьба Ани и Миши","rate":10})
 st=call("/api/state")[1]; ok(st["title"]=="Свадьба Ани и Миши" and st["rate"]==10,"настройки применились")
 for p in ["/","/host","/admin","/connect?code="+code,"/qr"]:
-    with urllib.request.urlopen(B+p) as f: ok(f.status==200,f"страница {p}")
+    with _op.open(B+p) as f: ok(f.status==200,f"страница {p}")
 call("/api/speech/clear",{})

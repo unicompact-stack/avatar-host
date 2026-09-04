@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Пульт ведущего — вход</title>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:linear-gradient(160deg,#0b1626,#050a12);color:#e8eef5;
+    font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif;min-height:100vh;
+    display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{width:100%;max-width:360px;background:#0d1724;border:1px solid #1c2e42;
+    border-radius:20px;padding:28px;text-align:center}
+  h1{font-size:20px;margin-bottom:6px}
+  .muted{color:#6d829a;font-size:14px;margin-bottom:20px}
+  input{width:100%;background:#0a1420;border:1px solid #22384f;color:#e8eef5;border-radius:12px;
+    padding:16px;font-size:26px;text-align:center;letter-spacing:.4em;font-weight:800;margin-bottom:12px}
+  button{width:100%;background:#2563eb;color:#fff;border:0;border-radius:12px;padding:15px;
+    font-size:17px;font-weight:700;cursor:pointer}
+  .err{background:#3a1414;border:1px solid #6b2222;color:#f3a3a3;border-radius:10px;
+    padding:10px;font-size:14px;margin-bottom:12px}
+  .hint{color:#4a5f77;font-size:12px;margin-top:16px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Пульт ведущего</h1>
+  <div class="muted">Введите PIN, он показан в окне сервера</div>
+  {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  <form method="post">
+    <input name="pin" inputmode="numeric" maxlength="8" placeholder="····" autofocus autocomplete="off">
+    <button type="submit">Войти</button>
+  </form>
+  <div class="hint">PIN печатается в консоли при запуске сервера.<br>
+    Можно задать свой: переменная окружения ADMIN_PIN.</div>
+</div>
+</body>
+</html>

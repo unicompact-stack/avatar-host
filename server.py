@@ -17,17 +17,42 @@ import queue
 import random
 import threading
 
+import secrets
+from functools import wraps
+
 import qrcode
-from flask import Flask, Response, jsonify, render_template, request, send_file
+from flask import (Flask, Response, jsonify, redirect, render_template, request,
+                   send_file, session, url_for)
 
 import tts
+import netinfo
 import scenario as scenario_mod
 from event_state import EVENT, new_token, public_guest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BUILD = "4.1.0"
+BUILD = "4.2.0"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(16)
+
+# PIN пульта: без него любой гость в той же сети откроет /admin и заберёт управление.
+ADMIN_PIN = os.environ.get("ADMIN_PIN") or "".join(secrets.choice("0123456789") for _ in range(4))
+# Публичный базовый URL (для интернет-режима за туннелем/reverse-proxy)
+PUBLIC_URL = (os.environ.get("PUBLIC_URL") or "").rstrip("/")
+
+
+def admin_ok():
+    return session.get("admin") is True
+
+
+def require_admin(fn):
+    """Защита управляющих ручек. Гостевые и экранные ручки остаются открытыми."""
+    @wraps(fn)
+    def wrapper(*a, **kw):
+        if not admin_ok():
+            return jsonify({"error": "Нужен PIN пульта", "need_pin": True}), 401
+        return fn(*a, **kw)
+    return wrapper
 
 PRESETS = [
     "Дорогие гости, рассаживайтесь — через пару минут начинаем!",
@@ -120,10 +145,36 @@ def host():
     return render_template("host.html", code=EVENT.code, build=BUILD)
 
 
-@app.route("/admin")
+@app.route("/admin", methods=["GET", "POST"])
 def admin():
+    error = ""
+    if request.method == "POST":
+        if (request.form.get("pin") or "").strip() == ADMIN_PIN:
+            session["admin"] = True
+            session.permanent = True
+            return redirect(url_for("admin"))
+        error = "Неверный PIN"
+    if not admin_ok():
+        return render_template("admin_login.html", build=BUILD, error=error), (401 if error else 200)
     return render_template("admin.html", code=EVENT.code, build=BUILD,
                            voices=tts.VOICES, presets=PRESETS)
+
+
+@app.route("/admin/logout", methods=["POST"])
+def admin_logout():
+    session.pop("admin", None)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/network")
+@require_admin
+def api_network():
+    """Адреса для подключения — показываем в админке и на экране."""
+    u = netinfo.urls(PORT)
+    u["public_url"] = PUBLIC_URL
+    u["base"] = base_url()
+    u["admin_pin"] = ADMIN_PIN
+    return jsonify(u)
 
 
 @app.route("/connect")
@@ -131,12 +182,24 @@ def connect():
     return render_template("connect.html", code=request.args.get("code", "").upper(), build=BUILD)
 
 
+def base_url():
+    """Адрес, по которому нас видит телефон гостя."""
+    if PUBLIC_URL:
+        return PUBLIC_URL
+    base = request.headers.get("X-Forwarded-Host") or request.host
+    scheme = request.headers.get("X-Forwarded-Proto") or request.scheme
+    # localhost в QR бесполезен — телефон по нему попадёт сам в себя
+    hostname = base.split(":")[0]
+    if hostname in ("localhost", "127.0.0.1"):
+        port = base.split(":")[1] if ":" in base else str(PORT)
+        base = f"{netinfo.primary_ip()}:{port}"
+    return f"{scheme}://{base}"
+
+
 @app.route("/qr")
 def qr():
     code = request.args.get("code") or EVENT.code
-    base = request.headers.get("X-Forwarded-Host") or request.host
-    scheme = request.headers.get("X-Forwarded-Proto") or request.scheme
-    url = f"{scheme}://{base}/connect?code={code}"
+    url = f"{base_url()}/connect?code={code}"
     img = qrcode.make(url, box_size=10, border=2)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -190,6 +253,7 @@ def api_voices():
 
 
 @app.route("/api/settings", methods=["POST"])
+@require_admin
 def api_settings():
     d = request.get_json(force=True, silent=True) or {}
     with EVENT.lock:
@@ -211,6 +275,7 @@ def api_settings():
 
 
 @app.route("/api/reset", methods=["POST"])
+@require_admin
 def api_reset():
     EVENT.reset()
     EVENT.bus.publish("state", EVENT.snapshot())
@@ -220,6 +285,7 @@ def api_reset():
 # ---------------------------------------------------------------- речь
 
 @app.route("/api/say", methods=["POST"])
+@require_admin
 def api_say():
     d = request.get_json(force=True, silent=True) or {}
     text = (d.get("text") or "").strip()
@@ -232,6 +298,7 @@ def api_say():
 
 
 @app.route("/api/tts/preview", methods=["POST"])
+@require_admin
 def api_tts_preview():
     """Прямой синтез в обход очереди — только для тестового режима."""
     d = request.get_json(force=True, silent=True) or {}
@@ -251,6 +318,7 @@ def api_speech_done():
 
 
 @app.route("/api/speech/skip", methods=["POST"])
+@require_admin
 def api_speech_skip():
     EVENT.finish_current()
     EVENT.bus.publish("stop", {})
@@ -258,6 +326,7 @@ def api_speech_skip():
 
 
 @app.route("/api/speech/clear", methods=["POST"])
+@require_admin
 def api_speech_clear():
     with EVENT.lock:
         EVENT.speech_queue.clear()
@@ -313,6 +382,7 @@ def api_guests():
 
 
 @app.route("/api/guest/greet", methods=["POST"])
+@require_admin
 def api_guest_greet():
     d = request.get_json(force=True, silent=True) or {}
     token = (d.get("token") or "").strip()
@@ -341,6 +411,7 @@ def api_guest_me():
 # ---------------------------------------------------------------- конкурс
 
 @app.route("/api/quiz/start", methods=["POST"])
+@require_admin
 def api_quiz_start():
     d = request.get_json(force=True, silent=True) or {}
     question = (d.get("question") or "").strip()
@@ -366,6 +437,7 @@ def api_quiz_answer():
 
 
 @app.route("/api/quiz/close", methods=["POST"])
+@require_admin
 def api_quiz_close():
     d = request.get_json(force=True, silent=True) or {}
     correct = d.get("correct")
@@ -390,6 +462,7 @@ def api_leaderboard():
 # ---------------------------------------------------------------- демо-режим
 
 @app.route("/api/demo/guests", methods=["POST"])
+@require_admin
 def api_demo_guests():
     """Наливаем выдуманных гостей — репетиция без живых людей."""
     d = request.get_json(force=True, silent=True) or {}
@@ -411,6 +484,7 @@ def api_demo_guests():
 
 
 @app.route("/api/demo/answers", methods=["POST"])
+@require_admin
 def api_demo_answers():
     """Демо-гости отвечают на текущий вопрос."""
     snap = EVENT.quiz_public()
@@ -431,6 +505,7 @@ SCENARIO_DIR = os.path.join(BASE_DIR, "scenarios")
 
 
 @app.route("/api/scenario/list")
+@require_admin
 def api_scenario_list():
     """Готовые файлы, лежащие в scenarios/."""
     files = []
@@ -449,6 +524,7 @@ def api_scenario_list():
 
 
 @app.route("/api/scenario/load", methods=["POST"])
+@require_admin
 def api_scenario_load():
     """Загрузка сценария: файлом (multipart), телом JSON или именем из scenarios/."""
     try:
@@ -492,6 +568,7 @@ def api_scenario_state():
 
 
 @app.route("/api/scenario/<action>", methods=["POST"])
+@require_admin
 def api_scenario_action(action):
     d = request.get_json(force=True, silent=True) or {}
     try:
@@ -525,6 +602,7 @@ def api_collect_add():
 
 
 @app.route("/api/collect/close", methods=["POST"])
+@require_admin
 def api_collect_close():
     """Закрыть сбор и зачитать несколько пожеланий вслух."""
     with EVENT.lock:
@@ -542,6 +620,7 @@ def api_collect_close():
 
 
 @app.route("/api/collect/items")
+@require_admin
 def api_collect_items():
     with EVENT.lock:
         c = EVENT.collect
@@ -647,6 +726,7 @@ def run_scenario(fast=False):
 
 
 @app.route("/api/demo/scenario", methods=["POST"])
+@require_admin
 def api_demo_scenario():
     if SCENARIO_STATE["running"]:
         return jsonify({"error": "Сценарий уже идёт"}), 409
@@ -672,8 +752,5 @@ def api_health():
 PORT = int(os.environ.get("PORT", 8000))
 
 if __name__ == "__main__":
-    print(f"\n=== Аватар-хост v{BUILD} ===")
-    print(f"  Экран:    http://localhost:{PORT}/host")
-    print(f"  Админка:  http://localhost:{PORT}/admin")
-    print(f"  Гость:    http://localhost:{PORT}/connect?code={EVENT.code}\n")
+    print(netinfo.banner(PORT, BUILD, EVENT.code, ADMIN_PIN))
     app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)

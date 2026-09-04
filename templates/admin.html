@@ -59,6 +59,11 @@
   </div>
 
   <div class="card" style="margin-top:14px">
+    <h2>Подключение устройств</h2>
+    <div id="net" class="muted">…</div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
     <h2>Сценарий вечера (файл)</h2>
     <div class="row">
       <select id="sc-file" style="width:auto;max-width:340px;margin:0 6px 6px 0"></select>
@@ -169,6 +174,7 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function post(url,body){
   try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+    if(r.status===401){ location.reload(); return; }
     const d=await r.json(); if(d.error) banner(d.error); return d;}catch(e){banner('Сеть недоступна');}
 }
 function banner(msg){ const b=$('banner'); if(!msg){b.classList.remove('on');return;} b.textContent=msg; b.classList.add('on'); }
@@ -190,6 +196,24 @@ function demoGuests(n,greet){ post('/api/demo/guests',{count:n,greet}); }
 function greet(t){ post('/api/guest/greet',{token:t}); }
 
 // --- сценарий ---
+async function netInfo(){
+  try{
+    const r=await fetch('/api/network'); if(!r.ok)return;
+    const n=await r.json();
+    const rows=[
+      ['Экран (этот компьютер)', 'http://localhost:8000/host'],
+      ['Пульт с другого устройства', n.admin+'  · PIN '+n.admin_pin],
+      ['Гости (или просто QR)', n.connect],
+    ];
+    let html=rows.map(([k,v])=>`<div style="margin-bottom:3px">${k}: <b style="color:#9cc2ff">${esc(v)}</b></div>`).join('');
+    if(n.public_url) html+=`<div style="margin-top:6px;color:#7fd6a8">Интернет-адрес: <b>${esc(n.public_url)}</b></div>`;
+    if(n.all_ips.length>1) html+=`<div style="margin-top:6px">Другие адреса компьютера: ${n.all_ips.slice(1).join(', ')} — если телефон не открывает, пробуйте их.</div>`;
+    if(!n.is_private&&!n.public_url) html+=`<div style="margin-top:6px;color:#f0c48b">Похоже, компьютер не в локальной сети — проверьте Wi-Fi.</div>`;
+    html+=`<div style="margin-top:6px">Все телефоны должны быть в той же Wi-Fi сети.</div>`;
+    $('net').innerHTML=html;
+  }catch(e){}
+}
+
 async function scList(){
   const r=await fetch('/api/scenario/list'); const d=await r.json();
   $('sc-file').innerHTML=d.files.map(f=>`<option value="${f.file}">${esc(f.title)}</option>`).join('')
@@ -277,7 +301,7 @@ async function refresh(){
     if(s.engine_note) banner(s.engine_note);
   }catch(e){}
 }
-scList(); scState(); refresh(); setInterval(refresh,5000);
+netInfo(); scList(); scState(); refresh(); setInterval(refresh,5000);
 </script>
 </body>
 </html>

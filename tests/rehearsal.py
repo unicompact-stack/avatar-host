@@ -1,17 +1,25 @@
 # -*- coding: utf-8 -*-
 """Репетиция вечера: запускает сценарий и печатает все реплики и события."""
-import json,time,urllib.request,threading
+import json,time,urllib.request,http.cookiejar,urllib.parse,threading,http.cookiejar,urllib.parse
 B="http://127.0.0.1:8000"
+_cj=http.cookiejar.CookieJar()
+_op=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_cj))
+def _login(pin="1234"):
+    try:
+        _op.open(urllib.request.Request(B+"/admin",data=b"pin="+pin.encode(),
+            headers={"Content-Type":"application/x-www-form-urlencoded"}),timeout=20)
+    except Exception: pass
+_login()
 def req(p,d=None):
     r=urllib.request.Request(B+p,data=json.dumps(d).encode() if d is not None else None,
         headers={'Content-Type':'application/json'},method='POST' if d is not None else 'GET')
     try:
-        with urllib.request.urlopen(r,timeout=30) as f: return json.loads(f.read())
+        with _op.open(r,timeout=30) as f: return json.loads(f.read())
     except urllib.error.HTTPError as e: return json.loads(e.read())
 
 events=[]
 def listen():
-    with urllib.request.urlopen(B+"/api/stream",timeout=200) as f:
+    with _op.open(B+"/api/stream",timeout=200) as f:
         ev=None
         for line in f:
             line=line.decode().strip()
