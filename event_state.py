@@ -85,6 +85,7 @@ class Event:
             self.now_speaking = None
             self.history = []
             self.quiz = None
+            self.collect = None      # сбор пожеланий с телефонов
             self.started_at = time.time()
             if not full:
                 self.bus.publish("reset", {})
@@ -189,6 +190,7 @@ class Event:
                 "rate": self.rate,
                 "pitch": self.pitch,
                 "quiz": self.quiz_public(),
+                "collect": self.collect_public(),
                 "queue": self.queue_snapshot(),
                 "guests": self.guest_list(),
                 "uptime": round(time.time() - self.started_at),
@@ -257,6 +259,29 @@ class Event:
             "tally": tally,
             "correct": q["correct"],
         }
+
+    # --- сбор пожеланий ---
+    def add_wish(self, guest_token, text):
+        with self.lock:
+            if not self.collect or not self.collect["open"]:
+                return None, "Сбор пожеланий закрыт"
+            g = self.guests.get(guest_token)
+            if not g:
+                return None, "Гость не найден"
+            text = (text or "").strip()[:300]
+            if not text:
+                return None, "Пустое пожелание"
+            self.collect["items"] = [i for i in self.collect["items"] if i["token"] != guest_token]
+            self.collect["items"].append({"token": guest_token, "name": g["name"], "text": text})
+            count = len(self.collect["items"])
+        self.bus.publish("collect", {"prompt": self.collect["prompt"], "open": True, "count": count})
+        return count, None
+
+    def collect_public(self):
+        c = self.collect
+        if not c:
+            return None
+        return {"prompt": c["prompt"], "open": c["open"], "count": len(c["items"])}
 
     def leaderboard(self, top=10):
         with self.lock:

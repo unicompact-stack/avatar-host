@@ -35,6 +35,13 @@
   .banner{background:#3a2410;border:1px solid #6b4318;color:#f0c48b;border-radius:10px;padding:9px 12px;font-size:13px;margin-top:10px;display:none}
   .banner.on{display:block}
   a{color:#7fb0ff}
+  .step{display:flex;gap:9px;align-items:center;background:#0a1420;border:1px solid #22384f;
+    border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:5px}
+  .step.done{opacity:.45}
+  .step.current{border-color:#2563eb;background:#10243f;color:#9cc2ff;font-weight:600}
+  .step .t{flex:1}
+  .step .k{color:#6d829a;font-size:11px;text-transform:uppercase}
+  .step button{padding:3px 9px;font-size:11px;margin:0;background:#24405e}
   .half{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 </style>
 </head>
@@ -49,6 +56,29 @@
     <div>Гостей: <b id="gcount">0</b></div>
     <div>Фаза: <b id="phase">—</b></div>
     <div>Движок: <b id="engine">—</b></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>Сценарий вечера (файл)</h2>
+    <div class="row">
+      <select id="sc-file" style="width:auto;max-width:340px;margin:0 6px 6px 0"></select>
+      <button onclick="loadPreset()">Загрузить</button>
+      <label class="ghost" style="background:#152437;border:1px solid #26405c;border-radius:10px;
+        padding:10px 14px;font-size:14px;font-weight:600;cursor:pointer;display:inline-block">
+        Загрузить свой .json<input type="file" id="sc-upload" accept=".json,application/json" hidden onchange="uploadFile()">
+      </label>
+      <button class="ghost" onclick="post('/api/scenario/unload').then(scState)">Выгрузить</button>
+    </div>
+    <div id="sc-meta" class="muted"></div>
+    <div id="sc-controls" style="display:none">
+      <div class="row" style="margin-top:10px">
+        <button class="ok" id="sc-next" onclick="scAct('next')">▶ Далее</button>
+        <button class="ghost" onclick="scAct('repeat')">↺ Повторить</button>
+        <button class="ghost" onclick="scAct('skip')">⏭ Пропустить</button>
+        <button class="warn" onclick="scAct('stop')">⏹ В начало</button>
+      </div>
+      <div id="sc-steps" style="margin-top:10px;max-height:280px;overflow-y:auto"></div>
+    </div>
   </div>
 
   <div class="grid">
@@ -95,6 +125,11 @@
         </select>
       </div>
       <div id="quizinfo" class="muted"></div>
+      <h2 style="margin-top:14px">Пожелания</h2>
+      <div class="row">
+        <button class="ghost" onclick="post('/api/collect/close').then(refresh)">Закрыть сбор и зачитать</button>
+      </div>
+      <div id="collectinfo" class="muted"></div>
     </div>
 
     <div class="card">
@@ -154,6 +189,39 @@ function quizClose(){ const c=$('correct').value; post('/api/quiz/close',c===''?
 function demoGuests(n,greet){ post('/api/demo/guests',{count:n,greet}); }
 function greet(t){ post('/api/guest/greet',{token:t}); }
 
+// --- сценарий ---
+async function scList(){
+  const r=await fetch('/api/scenario/list'); const d=await r.json();
+  $('sc-file').innerHTML=d.files.map(f=>`<option value="${f.file}">${esc(f.title)}</option>`).join('')
+    ||'<option value="">нет файлов в scenarios/</option>';
+}
+async function loadPreset(){
+  const f=$('sc-file').value; if(!f)return;
+  const d=await post('/api/scenario/load',{file:f}); if(d&&!d.error){banner('');scRender(d);}
+}
+async function uploadFile(){
+  const inp=$('sc-upload'); if(!inp.files.length)return;
+  const fd=new FormData(); fd.append('file',inp.files[0]);
+  const r=await fetch('/api/scenario/load',{method:'POST',body:fd});
+  const d=await r.json(); inp.value='';
+  if(d.error){banner('Сценарий не загружен: '+d.error);}else{banner('');scRender(d);}
+}
+async function scAct(a){ const d=await post('/api/scenario/'+a); if(d&&!d.error)scRender(d); }
+async function scState(){ const r=await fetch('/api/scenario/state'); scRender(await r.json()); }
+function scRender(s){
+  if(!s||!s.loaded){ $('sc-meta').textContent='Сценарий не загружен';
+    $('sc-controls').style.display='none'; return; }
+  $('sc-meta').innerHTML=`<b>${esc(s.meta.title||'')}</b> · ${esc(s.filename)} · шаг
+    ${s.index<0?'—':s.index+1} из ${s.total}${s.status==='done'?' · завершён':''}`;
+  $('sc-controls').style.display='block';
+  $('sc-next').textContent = s.index<0 ? '▶ Начать вечер' : (s.status==='done'?'✔ Завершён':'▶ Далее');
+  $('sc-steps').innerHTML=s.steps.map((st,i)=>
+    `<div class="step ${st.state}"><span class="t">${i+1}. ${esc(st.title)}</span>
+     <span class="k">${st.type}</span>
+     <button onclick="post('/api/scenario/goto',{index:${i}}).then(scRender)">сюда</button></div>`).join('');
+  const cur=$('sc-steps').querySelector('.current'); if(cur)cur.scrollIntoView({block:'nearest'});
+}
+
 function renderQueue(q){
   const items=[];
   if(q.speaking) items.push(`<div class="q-item now">▶ ${esc(q.speaking.text)}</div>`);
@@ -174,6 +242,8 @@ let filled=false;
 function applyState(s){
   $('code').textContent=s.code; $('phase').textContent=s.phase;
   renderQueue(s.queue); renderGuests(s.guests||[]); renderQuiz(s.quiz);
+  if(s.collect!==undefined) $('collectinfo').textContent = s.collect
+    ? `«${s.collect.prompt}» — собрано ${s.collect.count}${s.collect.open?'':' (закрыт)'}` : '';
   if(!filled){
     $('title').value=s.title; $('subtitle').value=s.subtitle;
     $('greeting_template').value=s.greeting_template; $('voice').value=s.voice;
@@ -194,6 +264,9 @@ es.addEventListener('quiz_progress',e=>renderQuiz(JSON.parse(e.data)));
 es.addEventListener('quiz_closed',e=>{renderQuiz(JSON.parse(e.data));refresh();});
 es.addEventListener('speak',e=>{const d=JSON.parse(e.data); if(d.note)banner(d.note);});
 es.addEventListener('error',e=>{try{banner(JSON.parse(e.data).message)}catch(_){}});
+es.addEventListener('scenario_state',e=>scRender(JSON.parse(e.data)));
+es.addEventListener('collect',e=>{const d=JSON.parse(e.data);
+  $('collectinfo').textContent=d?`«${d.prompt}» — собрано ${d.count}${d.open?'':' (закрыт)'}`:'';});
 es.addEventListener('scenario',e=>{const d=JSON.parse(e.data);$('scenario').textContent=(d.running?'▶ ':'✔ ')+d.step;});
 es.onerror=()=>{$('link').textContent='нет связи…';};
 
@@ -204,7 +277,7 @@ async function refresh(){
     if(s.engine_note) banner(s.engine_note);
   }catch(e){}
 }
-refresh(); setInterval(refresh,5000);
+scList(); scState(); refresh(); setInterval(refresh,5000);
 </script>
 </body>
 </html>

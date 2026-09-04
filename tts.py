@@ -106,13 +106,15 @@ def _offline_synth(text, out_path, duration):
     """Тихий «говорящий» сигнал: слышно, что аватар работает, но не режет ухо."""
     rate = 22050
     n = int(rate * duration)
-    frames = bytearray()
+    pack = struct.Struct("<%dh" % n).pack
+    vals = []
     for i in range(n):
         t = i / rate
         env = 0.5 + 0.5 * math.sin(2 * math.pi * 2.6 * t)  # ритм «слогов»
         fade = min(1.0, t / 0.05, max(0.0, (duration - t) / 0.08))
         val = 0.055 * env * fade * math.sin(2 * math.pi * (115 + 22 * math.sin(2 * math.pi * 0.7 * t)) * t)
-        frames += struct.pack("<h", int(val * 32767))
+        vals.append(int(val * 32767))
+    frames = pack(*vals)
     with wave.open(out_path, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)

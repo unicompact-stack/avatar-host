@@ -21,10 +21,11 @@ import qrcode
 from flask import Flask, Response, jsonify, render_template, request, send_file
 
 import tts
+import scenario as scenario_mod
 from event_state import EVENT, new_token, public_guest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BUILD = "4.0.0"
+BUILD = "4.1.0"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -331,6 +332,7 @@ def api_guest_me():
     return jsonify({
         "guest": public_guest(guest),
         "quiz": EVENT.quiz_public(),
+        "collect": EVENT.collect_public(),
         "phase": EVENT.phase,
         "title": EVENT.title,
     })
@@ -420,6 +422,131 @@ def api_demo_answers():
             EVENT.answer_quiz(token, random.randrange(len(snap["options"])))
             n += 1
     return jsonify({"answered": n, "quiz": EVENT.quiz_public()})
+
+
+# ---------------------------------------------------------------- сценарии
+
+RUNNER = scenario_mod.Runner(EVENT, say, greet_guest)
+SCENARIO_DIR = os.path.join(BASE_DIR, "scenarios")
+
+
+@app.route("/api/scenario/list")
+def api_scenario_list():
+    """Готовые файлы, лежащие в scenarios/."""
+    files = []
+    if os.path.isdir(SCENARIO_DIR):
+        for name in sorted(os.listdir(SCENARIO_DIR)):
+            if not name.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(SCENARIO_DIR, name), encoding="utf-8") as f:
+                    meta = (json.load(f).get("meta") or {})
+                files.append({"file": name, "title": meta.get("title", name),
+                              "duration_min": meta.get("duration_min")})
+            except Exception:
+                files.append({"file": name, "title": name + " (ошибка чтения)"})
+    return jsonify({"files": files})
+
+
+@app.route("/api/scenario/load", methods=["POST"])
+def api_scenario_load():
+    """Загрузка сценария: файлом (multipart), телом JSON или именем из scenarios/."""
+    try:
+        upload = request.files.get("file")
+        if upload:
+            text, name = upload.read().decode("utf-8"), upload.filename
+        else:
+            d = request.get_json(force=True, silent=True) or {}
+            if d.get("file"):
+                name = os.path.basename(d["file"])
+                path = os.path.join(SCENARIO_DIR, name)
+                if not os.path.isfile(path):
+                    return jsonify({"error": "Файл не найден"}), 404
+                text = open(path, encoding="utf-8").read()
+            elif d.get("content"):
+                text, name = d["content"], d.get("filename", "сценарий.json")
+            else:
+                return jsonify({"error": "Нужен файл, content или имя file"}), 400
+        sc = RUNNER.load(text, name)
+    except scenario_mod.ScenarioError as e:
+        return jsonify({"error": str(e)}), 400
+    except UnicodeDecodeError:
+        return jsonify({"error": "Файл должен быть в кодировке UTF-8"}), 400
+
+    meta = sc["meta"]
+    with EVENT.lock:
+        EVENT.title = meta.get("title", EVENT.title)
+        EVENT.subtitle = meta.get("subtitle", EVENT.subtitle)
+        if meta.get("voice") in [v["id"] for v in tts.VOICES]:
+            EVENT.voice = meta["voice"]
+        EVENT.rate = int(meta.get("rate", EVENT.rate))
+        EVENT.pitch = int(meta.get("pitch", EVENT.pitch))
+    EVENT.bus.publish("state", EVENT.snapshot())
+    EVENT.bus.publish("scenario_state", RUNNER.state())
+    return jsonify(RUNNER.state())
+
+
+@app.route("/api/scenario/state")
+def api_scenario_state():
+    return jsonify(RUNNER.state())
+
+
+@app.route("/api/scenario/<action>", methods=["POST"])
+def api_scenario_action(action):
+    d = request.get_json(force=True, silent=True) or {}
+    try:
+        if action == "next":
+            return jsonify(RUNNER.next_step())
+        if action == "repeat":
+            return jsonify(RUNNER.repeat())
+        if action == "skip":
+            return jsonify(RUNNER.skip())
+        if action == "stop":
+            return jsonify(RUNNER.stop())
+        if action == "goto":
+            return jsonify(RUNNER.goto(int(d.get("index", 0))))
+        if action == "unload":
+            RUNNER.unload()
+            return jsonify(RUNNER.state())
+    except scenario_mod.ScenarioError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"error": "Неизвестное действие"}), 404
+
+
+# ---------------------------------------------------------------- пожелания
+
+@app.route("/api/collect/add", methods=["POST"])
+def api_collect_add():
+    d = request.get_json(force=True, silent=True) or {}
+    count, err = EVENT.add_wish((d.get("token") or "").strip(), d.get("text", ""))
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify({"ok": True, "count": count})
+
+
+@app.route("/api/collect/close", methods=["POST"])
+def api_collect_close():
+    """Закрыть сбор и зачитать несколько пожеланий вслух."""
+    with EVENT.lock:
+        c = EVENT.collect
+        if not c:
+            return jsonify({"error": "Сбор не запущен"}), 400
+        c["open"] = False
+        items = list(c["items"])
+        n = c.get("read_aloud", 0)
+    EVENT.bus.publish("collect", EVENT.collect_public())
+    if n and items:
+        for it in random.sample(items, min(n, len(items))):
+            say(f"{it['name']} желает: {it['text']}", kind="say", priority=3)
+    return jsonify({"ok": True, "total": len(items)})
+
+
+@app.route("/api/collect/items")
+def api_collect_items():
+    with EVENT.lock:
+        c = EVENT.collect
+        items = [{"name": i["name"], "text": i["text"]} for i in c["items"]] if c else []
+    return jsonify({"items": items})
 
 
 SCENARIO_STATE = {"running": False, "step": "", "log": []}

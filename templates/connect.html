@@ -47,6 +47,13 @@
     <div class="big">🎉</div>
     <h1 id="hello"></h1>
     <div class="muted" id="hint">Смотрите на экран — сейчас вас поприветствуют.</div>
+    <div id="collect" class="hidden">
+      <h1 id="c-prompt" style="font-size:18px;margin:16px 0 12px"></h1>
+      <input id="c-text" placeholder="Ваше пожелание" maxlength="300">
+      <button onclick="sendWish()">Отправить</button>
+      <div class="muted" id="c-status" style="margin-top:8px"></div>
+    </div>
+
     <div id="quiz" class="hidden">
       <h1 id="q-text" style="font-size:18px;margin:16px 0 12px"></h1>
       <div id="q-opts"></div>
@@ -88,6 +95,9 @@ async function poll(){
     const r=await fetch('/api/guest/me?token='+encodeURIComponent(token));
     if(r.status===404){localStorage.removeItem('guestToken');location.reload();return;}
     const d=await r.json();
+    const c=d.collect;
+    if(c&&c.open){ $('collect').classList.remove('hidden'); $('c-prompt').textContent=c.prompt; }
+    else { $('collect').classList.add('hidden'); }
     const q=d.quiz;
     if(!q){$('quiz').classList.add('hidden');return;}
     if(q.id!==quizId){quizId=q.id;answered=null;}
@@ -98,6 +108,14 @@ async function poll(){
     $('q-status').textContent=q.open?(answered!=null?'Ответ принят':'Выберите вариант'):
       (q.correct!=null?(answered===q.correct?'Верно! 🎉':`Правильный ответ: ${q.options[q.correct]}`):'Приём ответов закрыт');
   }catch(e){}
+}
+async function sendWish(){
+  const text=$('c-text').value.trim(); if(!text)return;
+  const r=await fetch('/api/collect/add',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({token,text})});
+  const d=await r.json();
+  $('c-status').textContent = d.error ? d.error : 'Пожелание принято, спасибо!';
+  if(!d.error) $('c-text').disabled=true;
 }
 async function answer(i){
   answered=i; poll();
