@@ -1,41 +1,39 @@
 @echo off
-chcp 65001 >nul
-title Аватар-хост
+title Avatar-host
 
 echo ===================================
-echo   Аватар-хост — локальная сеть
+echo   Avatar-host v4.2.0
 echo ===================================
 echo.
 
-REM --- Правило фаервола: без него телефоны не достучатся до порта 8000 ---
+REM --- Firewall rule: phones need port 8000 open ---
 net session >nul 2>&1
 if %errorlevel% equ 0 (
     netsh advfirewall firewall show rule name="Avatar-host 8000" >nul 2>&1
     if errorlevel 1 (
-        echo Открываю порт 8000 в брандмауэре Windows...
+        echo Opening port 8000 in Windows Firewall...
         netsh advfirewall firewall add rule name="Avatar-host 8000" dir=in action=allow protocol=TCP localport=8000 >nul
-        echo Готово.
+        echo Done.
     ) else (
-        echo Правило брандмауэра уже есть.
+        echo Firewall rule already exists.
     )
 ) else (
-    echo ВНИМАНИЕ: запущено без прав администратора.
-    echo Если телефоны не открывают страницу — закройте это окно и запустите
-    echo start.bat правой кнопкой → «Запуск от имени администратора».
+    echo WARNING: no admin rights.
+    echo If phones cannot connect, right-click start.bat and Run as Administrator.
 )
 echo.
 
-echo Устанавливаю зависимости...
+echo Installing dependencies...
 pip install -q -r requirements.txt
 if %errorlevel% neq 0 (
     echo.
-    echo ОШИБКА: pip install не выполнился. Проверьте, что Python установлен и есть в PATH.
+    echo ERROR: pip install failed. Check Python is installed and in PATH.
     pause
     exit /b 1
 )
 echo.
 
-REM Свой PIN пульта — раскомментируйте и поменяйте:
+REM Set your own PIN (uncomment and change):
 REM set ADMIN_PIN=1234
 
 python server.py
