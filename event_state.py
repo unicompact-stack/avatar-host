@@ -86,6 +86,9 @@ class Event:
             self.history = []
             self.quiz = None
             self.collect = None      # сбор пожеланий с телефонов
+            # Сцена: что показывать на экране. avatar | media | celebration | black
+            self.stage = {"mode": "avatar", "media": None, "page": 1,
+                          "celebration": None, "caption": ""}
             self.started_at = time.time()
             if not full:
                 self.bus.publish("reset", {})
@@ -191,6 +194,7 @@ class Event:
                 "pitch": self.pitch,
                 "quiz": self.quiz_public(),
                 "collect": self.collect_public(),
+                "stage": dict(self.stage),
                 "queue": self.queue_snapshot(),
                 "guests": self.guest_list(),
                 "uptime": round(time.time() - self.started_at),
@@ -259,6 +263,23 @@ class Event:
             "tally": tally,
             "correct": q["correct"],
         }
+
+    # --- сцена экрана ---
+    def set_stage(self, mode=None, media=None, page=None, celebration=None, caption=None):
+        with self.lock:
+            if mode:
+                self.stage["mode"] = mode
+            if media is not None:
+                self.stage["media"] = media
+            if page is not None:
+                self.stage["page"] = max(1, int(page))
+            if celebration is not None:
+                self.stage["celebration"] = celebration
+            if caption is not None:
+                self.stage["caption"] = caption
+            snap = dict(self.stage)
+        self.bus.publish("stage", snap)
+        return snap
 
     # --- сбор пожеланий ---
     def add_wish(self, guest_token, text):

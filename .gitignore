@@ -33,3 +33,5 @@ server_err.log
 .DS_Store
 Thumbs.db
 .venv/
+static/media/*
+!static/media/.gitkeep

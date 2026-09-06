@@ -36,6 +36,36 @@
   .quiz-opt span{position:relative}
   .quiz-meta{margin-top:12px;color:#8fa9c4;font-size:15px}
 
+  /* --- слои сцены: медиа и празднования поверх аватара --- */
+  .layer{position:absolute;inset:0;z-index:12;display:none;align-items:center;justify-content:center;background:#04080e}
+  .layer.on{display:flex}
+  #media-img{max-width:100%;max-height:100%;object-fit:contain}
+  #media-doc{width:100%;height:100%;border:0;background:#fff}
+  .caption{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);z-index:16;
+    background:rgba(0,0,0,.7);padding:9px 22px;border-radius:10px;font-size:22px;font-weight:600;display:none}
+  .caption.on{display:block}
+  #stage-black{background:#000}
+
+  /* празднования — чистый CSS, без файлов */
+  #celebration{background:radial-gradient(ellipse at 50% 60%,#0d1b33,#03070d 75%);overflow:hidden}
+  .spark{position:absolute;width:9px;height:9px;border-radius:50%;opacity:0;
+    animation:burst 1.6s ease-out infinite}
+  @keyframes burst{
+    0%{transform:translate(0,0) scale(.4);opacity:1}
+    75%{opacity:.9}
+    100%{transform:translate(var(--dx),var(--dy)) scale(.15);opacity:0}}
+  .conf{position:absolute;top:-8vh;width:12px;height:20px;opacity:.95;animation:fall linear infinite}
+  @keyframes fall{
+    0%{transform:translateY(-10vh) rotate(0)}
+    100%{transform:translateY(115vh) rotate(720deg)}}
+  .star{position:absolute;font-size:40px;opacity:0;animation:twinkle 2.2s ease-in-out infinite}
+  @keyframes twinkle{0%,100%{opacity:0;transform:scale(.5)}50%{opacity:1;transform:scale(1.15)}}
+  .clap{position:absolute;font-size:62px;opacity:0;animation:rise 2.6s ease-out infinite}
+  @keyframes rise{0%{opacity:0;transform:translateY(30px) scale(.7)}
+    25%{opacity:1}100%{opacity:0;transform:translateY(-60vh) scale(1.2)}}
+  .celebration-text{position:relative;z-index:3;font-size:64px;font-weight:800;
+    text-shadow:0 0 40px rgba(255,200,80,.6);text-align:center}
+
   .bottom-bar{height:180px;min-height:180px;background:#0c1520;border-top:1px solid #1c2e42;display:flex}
   .bar-qr{width:190px;padding:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-right:1px solid #1c2e42}
   .bar-qr img{width:112px;height:112px;border-radius:8px;background:#fff}
@@ -68,6 +98,14 @@
   <div class="stage">
     <video id="vAwait" src="/static/videos/awaiting.mp4?v={{ build }}" autoplay loop muted playsinline preload="auto"></video>
     <video id="vSpeak" class="hidden" src="/static/videos/speaking.mp4?v={{ build }}" loop muted playsinline preload="auto"></video>
+    <div class="layer" id="stage-media">
+      <img id="media-img" alt="">
+      <iframe id="media-doc" style="display:none"></iframe>
+    </div>
+    <div class="layer" id="celebration"><div class="celebration-text" id="cel-text"></div></div>
+    <div class="layer" id="stage-black"></div>
+    <div class="caption" id="caption"></div>
+
     <div class="quiz-card" id="quiz">
       <h2 id="q-text"></h2>
       <div class="quiz-opts" id="q-opts"></div>
@@ -126,6 +164,82 @@ function play(d){
   audio.play().catch(()=>{ $('unlock').classList.add('on'); setTimeout(finish,(d.duration||3)*1000); });
 }
 
+// --- сцена: аватар / медиа / празднование / чёрный экран ---
+let celTimer=null;
+function renderStage(st){
+  if(!st) return;
+  const mode=st.mode||'avatar';
+  const media=$('stage-media'), cel=$('celebration'), black=$('stage-black');
+  [media,cel,black].forEach(l=>l.classList.remove('on'));
+  if(celTimer){clearInterval(celTimer);celTimer=null;}
+  cel.querySelectorAll('.spark,.conf,.star,.clap').forEach(n=>n.remove());
+
+  if(mode==='media'&&st.media){
+    const img=$('media-img'), doc=$('media-doc');
+    if(st.media.kind==='doc'){
+      img.style.display='none'; doc.style.display='block';
+      doc.src=st.media.url+'#page='+(st.page||1)+'&view=FitH&toolbar=0';
+    }else{
+      doc.style.display='none'; img.style.display='block'; img.src=st.media.url;
+    }
+    media.classList.add('on');
+  } else if(mode==='celebration'){
+    cel.classList.add('on');
+    startCelebration(st.celebration||'fireworks');
+  } else if(mode==='black'){
+    black.classList.add('on');
+  }
+  const cap=$('caption');
+  if(st.caption){cap.textContent=st.caption;cap.classList.add('on');}else{cap.classList.remove('on');}
+}
+
+function startCelebration(kind){
+  const cel=$('celebration'), text=$('cel-text');
+  const colors=['#ffd166','#ef476f','#06d6a0','#4cc9f0','#f78c6b','#c77dff'];
+  const rnd=(a,b)=>a+Math.random()*(b-a);
+  text.textContent={fireworks:'🎉',confetti:'🎊',applause:'',stars:'✨'}[kind]||'';
+  text.style.fontSize = kind==='applause' ? '0' : '64px';
+
+  function spawn(){
+    if(cel.querySelectorAll('*').length>170) return;
+    if(kind==='fireworks'){
+      const cx=rnd(15,85), cy=rnd(20,65), c=colors[(Math.random()*colors.length)|0];
+      for(let i=0;i<18;i++){
+        const a=Math.PI*2*i/18, d=rnd(90,190), el=document.createElement('div');
+        el.className='spark'; el.style.left=cx+'%'; el.style.top=cy+'%';
+        el.style.background=c; el.style.boxShadow='0 0 14px '+c;
+        el.style.setProperty('--dx',Math.cos(a)*d+'px');
+        el.style.setProperty('--dy',Math.sin(a)*d+'px');
+        el.style.animationDelay=rnd(0,.15)+'s';
+        cel.appendChild(el); setTimeout(()=>el.remove(),1900);
+      }
+    } else if(kind==='confetti'){
+      for(let i=0;i<6;i++){
+        const el=document.createElement('div'); el.className='conf';
+        el.style.left=rnd(0,100)+'%';
+        el.style.background=colors[(Math.random()*colors.length)|0];
+        el.style.animationDuration=rnd(2.4,4.6)+'s';
+        cel.appendChild(el); setTimeout(()=>el.remove(),5000);
+      }
+    } else if(kind==='stars'){
+      const el=document.createElement('div'); el.className='star'; el.textContent='✦';
+      el.style.left=rnd(3,94)+'%'; el.style.top=rnd(5,85)+'%';
+      el.style.color=colors[(Math.random()*colors.length)|0];
+      el.style.animationDelay=rnd(0,1)+'s';
+      cel.appendChild(el); setTimeout(()=>el.remove(),3000);
+    } else { // applause
+      for(let i=0;i<3;i++){
+        const el=document.createElement('div'); el.className='clap';
+        el.textContent=['👏','🙌','👏'][i%3];
+        el.style.left=rnd(5,90)+'%'; el.style.bottom='0';
+        el.style.animationDelay=rnd(0,.8)+'s';
+        cel.appendChild(el); setTimeout(()=>el.remove(),3200);
+      }
+    }
+  }
+  spawn(); celTimer=setInterval(spawn, kind==='confetti'?260:900);
+}
+
 function renderGuests(list){
   $('guest-count').textContent=list.length;
   $('guests').innerHTML = list.length ? list.map(g=>
@@ -152,6 +266,7 @@ function applyState(s){
   $('closed').style.display=s.accepting?'none':'block';
   renderGuests(s.guests||[]);
   renderQuiz(s.quiz);
+  renderStage(s.stage);
 }
 
 let es;
@@ -163,6 +278,7 @@ function connect(){
   es.addEventListener('reset',()=>location.reload());
   es.addEventListener('speak',e=>play(JSON.parse(e.data)));
   es.addEventListener('stop',()=>{stopAudio();currentId=null;});
+  es.addEventListener('stage',e=>renderStage(JSON.parse(e.data)));
   es.addEventListener('guest_joined',e=>{ const d=JSON.parse(e.data); fetchGuests(); });
   es.addEventListener('guest_greeted',()=>fetchGuests());
   es.addEventListener('quiz_started',e=>renderQuiz(JSON.parse(e.data)));

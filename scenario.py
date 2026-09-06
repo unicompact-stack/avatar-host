@@ -11,7 +11,9 @@ import threading
 import time
 
 FORMAT = "avatar-host-scenario"
-STEP_TYPES = {"say", "greet_guests", "quiz", "poll", "collect", "pause", "handoff", "settings"}
+STEP_TYPES = {"say", "greet_guests", "quiz", "poll", "collect", "pause", "handoff",
+              "settings", "stage"}
+STAGE_MODES = ("avatar", "media", "celebration", "black")
 
 
 class ScenarioError(ValueError):
@@ -75,6 +77,12 @@ def validate(data):
                 c = q.get("correct")
                 if c is not None and not (0 <= int(c) < len(opts)):
                     raise ScenarioError(f"Шаг {i} ({sid}), вопрос {j}: «correct» вне диапазона")
+        if t == "stage":
+            m = s.get("mode", "avatar")
+            if m not in STAGE_MODES:
+                raise ScenarioError(f"Шаг {i} ({sid}): mode должен быть одним из {', '.join(STAGE_MODES)}")
+            if m == "media" and not str(s.get("media", "")).strip():
+                raise ScenarioError(f"Шаг {i} ({sid}): для mode=media нужно имя файла в «media»")
         if t == "collect" and not str(s.get("prompt", "")).strip():
             raise ScenarioError(f"Шаг {i} ({sid}): нужен «prompt»")
 
@@ -261,7 +269,26 @@ class Runner:
                     ev.voice = step["voice"]
             ev.bus.publish("state", ev.snapshot())
 
-        if t == "say":
+        # любой шаг может попутно переключить экран
+        if t == "stage" or "stage" in step:
+            sp = step.get("stage") if isinstance(step.get("stage"), dict) else step
+            item = None
+            name = sp.get("media")
+            if name:
+                import media as media_mod
+                item = media_mod.info(media_mod.safe_name(name))
+                if not item:
+                    self._note(f"Файл «{name}» не найден в медиатеке")
+            ev.set_stage(mode=sp.get("mode"), media=item if name else None,
+                         page=sp.get("page"), celebration=sp.get("celebration"),
+                         caption=sp.get("caption"))
+
+        if t == "stage":
+            if step.get("text"):
+                self._say(self.fill(step["text"]), kind="say", priority=3)
+            self._note(f"Экран: {step.get('mode', 'avatar')}")
+
+        elif t == "say":
             self._say(self.fill(step["text"]), kind="say", priority=3)
             self._note(f"Реплика: {step['title']}")
 

@@ -47,7 +47,7 @@ s,d=call("/api/scenario/load",{"content":json.dumps({"format":"avatar-host-scena
 ok(s==400,"кривой шаг отклонён: "+d["error"][:60])
 
 s,d=call("/api/scenario/load",{"file":"корпоративный-юбилей-45.json"})
-ok(s==200 and d["total"]==16,f"сценарий загружен: {d['total']} шагов, «{d['meta']['title']}»")
+ok(s==200 and d["total"]==17,f"сценарий загружен: {d['total']} шагов, «{d['meta']['title']}»")
 ok(call("/api/state")[1]["title"]==d["meta"]["title"],"заголовок экрана взят из meta")
 
 # гости заходят
@@ -85,5 +85,7 @@ ok(any("{" not in t for t in spoken) and not any("{hero}" in t or "{count}" in t
 ok(any("Андрей Викторович" in t for t in spoken),"имя юбиляра подставлено")
 ok(any("желает" in t for t in spoken),"пожелания зачитаны вслух")
 ok(any("гост" in t for t in spoken),"склонение числительных работает")
+st2=call("/api/state")[1]["stage"]
+ok(st2["mode"] in ("celebration","avatar"),f"экран переключался сценарием, финал: {st2['mode']}, подпись «{st2.get('caption','')}»")
 print("\nпримеры реплик:")
 for t in spoken[:3]+spoken[-3:]: print("  •",t[:95])

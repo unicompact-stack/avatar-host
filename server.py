@@ -25,15 +25,17 @@ from flask import (Flask, Response, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 
 import tts
+import media
 import netinfo
 import scenario as scenario_mod
 from event_state import EVENT, new_token, public_guest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BUILD = "4.2.0"
+BUILD = "4.3.0"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(16)
+app.config["MAX_CONTENT_LENGTH"] = media.MAX_BYTES + 1024 * 1024
 
 # PIN пульта: без него любой гость в той же сети откроет /admin и заберёт управление.
 ADMIN_PIN = os.environ.get("ADMIN_PIN") or "".join(secrets.choice("0123456789") for _ in range(4))
@@ -588,6 +590,87 @@ def api_scenario_action(action):
     except scenario_mod.ScenarioError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"error": "Неизвестное действие"}), 404
+
+
+# ---------------------------------------------------------------- медиатека
+
+@app.errorhandler(413)
+def too_large(_):
+    mb = media.MAX_BYTES // 1024 // 1024
+    return jsonify({"error": f"Файл слишком большой. Максимум {mb} МБ"}), 413
+
+
+@app.route("/api/media/list")
+@require_admin
+def api_media_list():
+    return jsonify({"items": media.listing(), "celebrations": media.CELEBRATIONS,
+                    "modes": list(media.STAGE_MODES)})
+
+
+@app.route("/api/media/upload", methods=["POST"])
+@require_admin
+def api_media_upload():
+    files = request.files.getlist("file")
+    if not files:
+        return jsonify({"error": "Файл не передан"}), 400
+    saved, errors = [], []
+    for f in files:
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        f.seek(0)
+        err = media.validate(f.filename, size)
+        if err:
+            errors.append(f"{f.filename}: {err}")
+            continue
+        saved.append(media.save(f))
+    if saved:
+        EVENT.bus.publish("media", {"items": media.listing()})
+    if errors and not saved:
+        return jsonify({"error": "; ".join(errors)}), 400
+    return jsonify({"saved": saved, "errors": errors, "items": media.listing()})
+
+
+@app.route("/api/media/delete", methods=["POST"])
+@require_admin
+def api_media_delete():
+    d = request.get_json(force=True, silent=True) or {}
+    name = d.get("name", "")
+    if not media.delete(name):
+        return jsonify({"error": "Файл не найден"}), 404
+    with EVENT.lock:
+        cur = (EVENT.stage.get("media") or {}).get("name")
+    if cur == media.safe_name(name):
+        EVENT.set_stage(mode="avatar", media=None)
+    EVENT.bus.publish("media", {"items": media.listing()})
+    return jsonify({"ok": True, "items": media.listing()})
+
+
+@app.route("/api/stage", methods=["POST"])
+@require_admin
+def api_stage():
+    """Что показывать на экране: аватар, файл, салют или чёрный экран."""
+    d = request.get_json(force=True, silent=True) or {}
+    mode = d.get("mode")
+    if mode and mode not in media.STAGE_MODES:
+        return jsonify({"error": f"Режим должен быть одним из: {', '.join(media.STAGE_MODES)}"}), 400
+
+    item = None
+    if d.get("media"):
+        item = media.info(media.safe_name(d["media"]))
+        if not item:
+            return jsonify({"error": "Файл не найден в медиатеке"}), 404
+        mode = mode or "media"
+
+    celebration = d.get("celebration")
+    if celebration:
+        if celebration not in media.CELEBRATION_IDS:
+            return jsonify({"error": "Неизвестная анимация"}), 400
+        mode = mode or "celebration"
+
+    snap = EVENT.set_stage(mode=mode, media=item if d.get("media") else None,
+                           page=d.get("page"), celebration=celebration,
+                           caption=d.get("caption"))
+    return jsonify(snap)
 
 
 # ---------------------------------------------------------------- пожелания

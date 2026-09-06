@@ -35,6 +35,14 @@
   .banner{background:#3a2410;border:1px solid #6b4318;color:#f0c48b;border-radius:10px;padding:9px 12px;font-size:13px;margin-top:10px;display:none}
   .banner.on{display:block}
   a{color:#7fb0ff}
+  .mfile{display:inline-flex;flex-direction:column;gap:5px;width:126px;padding:7px;margin:0 7px 7px 0;
+    background:#0a1420;border:1px solid #22384f;border-radius:10px;vertical-align:top;text-align:center}
+  .mfile.active{border-color:#2563eb;background:#10243f}
+  .mfile .thumb{height:66px;border-radius:6px;background:#050c14;display:flex;align-items:center;
+    justify-content:center;overflow:hidden;font-size:26px}
+  .mfile .thumb img{max-width:100%;max-height:100%;object-fit:contain}
+  .mfile .nm{font-size:10px;color:#8fa9c4;word-break:break-word;line-height:1.25;height:26px;overflow:hidden}
+  .mfile button{padding:3px 7px;font-size:10px;margin:0}
   .step{display:flex;gap:9px;align-items:center;background:#0a1420;border:1px solid #22384f;
     border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:5px}
   .step.done{opacity:.45}
@@ -56,6 +64,42 @@
     <div>Гостей: <b id="gcount">0</b></div>
     <div>Фаза: <b id="phase">—</b></div>
     <div>Движок: <b id="engine">—</b></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>Экран: что показывать</h2>
+    <div class="row">
+      <button class="ok" onclick="stage({mode:'avatar'})">🎤 Аватар</button>
+      <button class="ghost" onclick="stage({mode:'celebration',celebration:'fireworks'})">🎆 Салют</button>
+      <button class="ghost" onclick="stage({mode:'celebration',celebration:'confetti'})">🎊 Конфетти</button>
+      <button class="ghost" onclick="stage({mode:'celebration',celebration:'applause'})">👏 Аплодисменты</button>
+      <button class="ghost" onclick="stage({mode:'celebration',celebration:'stars'})">✨ Звёзды</button>
+      <button class="ghost" onclick="stage({mode:'black'})">⬛ Чёрный экран</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="caption" placeholder="Подпись внизу экрана (необязательно)"
+        style="width:auto;flex:1;min-width:200px;margin:0 6px 6px 0"
+        onkeydown="if(event.key==='Enter')stage({caption:this.value})">
+      <button class="ghost" onclick="stage({caption:$('caption').value})">Показать подпись</button>
+      <button class="ghost" onclick="$('caption').value='';stage({caption:''})">Убрать</button>
+    </div>
+    <div id="stage-now" class="muted" style="margin-top:6px"></div>
+
+    <h2 style="margin-top:14px">Медиатека — картинки и презентации</h2>
+    <div class="row">
+      <label style="background:#152437;border:1px solid #26405c;border-radius:10px;padding:10px 14px;
+        font-size:14px;font-weight:600;cursor:pointer;display:inline-block">
+        Загрузить файлы<input type="file" id="media-up" accept="image/*,.pdf" multiple hidden onchange="mediaUpload()">
+      </label>
+      <span class="muted">картинки (jpg, png, gif, webp) и PDF-презентации, до 25 МБ</span>
+    </div>
+    <div id="media-list" style="margin-top:10px"></div>
+    <div id="media-pager" class="row" style="display:none;margin-top:8px">
+      <button class="ghost" onclick="page(-1)">◀ Стр.</button>
+      <span class="muted" id="page-num" style="align-self:center">1</span>
+      <button class="ghost" onclick="page(1)">Стр. ▶</button>
+      <span class="muted">— листание страниц PDF</span>
+    </div>
   </div>
 
   <div class="card" style="margin-top:14px">
@@ -196,6 +240,60 @@ function demoGuests(n,greet){ post('/api/demo/guests',{count:n,greet}); }
 function greet(t){ post('/api/guest/greet',{token:t}); }
 
 // --- сценарий ---
+// --- сцена и медиатека ---
+let mediaItems=[], curStage={mode:'avatar'};
+async function stage(opts){
+  const d=await post('/api/stage',opts);
+  if(d&&!d.error){curStage=d;renderStageInfo();}
+}
+function renderStageInfo(){
+  const names={avatar:'🎤 Аватар',media:'🖼 Файл',celebration:'🎆 Анимация',black:'⬛ Чёрный экран'};
+  let t='Сейчас на экране: '+(names[curStage.mode]||curStage.mode);
+  if(curStage.mode==='media'&&curStage.media) t+=' — '+curStage.media.name
+    +(curStage.media.kind==='doc'?` (стр. ${curStage.page||1})`:'');
+  if(curStage.mode==='celebration') t+=' — '+(curStage.celebration||'');
+  $('stage-now').textContent=t;
+  $('media-pager').style.display=(curStage.mode==='media'&&curStage.media&&curStage.media.kind==='doc')?'flex':'none';
+  $('page-num').textContent=curStage.page||1;
+  renderMedia();
+}
+function page(delta){
+  const p=Math.max(1,(curStage.page||1)+delta);
+  stage({page:p, media:curStage.media&&curStage.media.name, mode:'media'});
+}
+async function mediaList(){
+  const r=await fetch('/api/media/list'); if(!r.ok)return;
+  const d=await r.json(); mediaItems=d.items; renderMedia();
+}
+function renderMedia(){
+  if(!mediaItems.length){ $('media-list').innerHTML='<div class="muted">пусто — загрузите картинки или PDF</div>'; return; }
+  const cur=(curStage.media||{}).name;
+  $('media-list').innerHTML=mediaItems.map(m=>`
+    <div class="mfile ${cur===m.name?'active':''}">
+      <div class="thumb">${m.kind==='image'?`<img src="${m.url}" loading="lazy">`:'📄'}</div>
+      <div class="nm" title="${esc(m.name)}">${esc(m.name)}</div>
+      <div style="display:flex;gap:4px;justify-content:center">
+        <button onclick="showMedia('${esc(m.name)}')">Показать</button>
+        <button style="background:#5d2b1c" onclick="delMedia('${esc(m.name)}')">✕</button>
+      </div>
+    </div>`).join('');
+}
+function showMedia(name){ stage({mode:'media',media:name,page:1}); }
+async function delMedia(name){
+  if(!confirm('Удалить '+name+'?'))return;
+  const d=await post('/api/media/delete',{name}); if(d&&d.items){mediaItems=d.items;renderMedia();}
+}
+async function mediaUpload(){
+  const inp=$('media-up'); if(!inp.files.length)return;
+  const fd=new FormData(); for(const f of inp.files) fd.append('file',f);
+  banner('Загружаю…');
+  const r=await fetch('/api/media/upload',{method:'POST',body:fd});
+  const d=await r.json(); inp.value='';
+  if(d.error){banner(d.error);return;}
+  banner(d.errors&&d.errors.length?d.errors.join('; '):'');
+  mediaItems=d.items; renderMedia();
+}
+
 async function netInfo(){
   try{
     const r=await fetch('/api/network'); if(!r.ok)return;
@@ -266,6 +364,7 @@ let filled=false;
 function applyState(s){
   $('code').textContent=s.code; $('phase').textContent=s.phase;
   renderQueue(s.queue); renderGuests(s.guests||[]); renderQuiz(s.quiz);
+  if(s.stage){curStage=s.stage;renderStageInfo();}
   if(s.collect!==undefined) $('collectinfo').textContent = s.collect
     ? `«${s.collect.prompt}» — собрано ${s.collect.count}${s.collect.open?'':' (закрыт)'}` : '';
   if(!filled){
@@ -289,6 +388,8 @@ es.addEventListener('quiz_closed',e=>{renderQuiz(JSON.parse(e.data));refresh();}
 es.addEventListener('speak',e=>{const d=JSON.parse(e.data); if(d.note)banner(d.note);});
 es.addEventListener('error',e=>{try{banner(JSON.parse(e.data).message)}catch(_){}});
 es.addEventListener('scenario_state',e=>scRender(JSON.parse(e.data)));
+es.addEventListener('stage',e=>{curStage=JSON.parse(e.data);renderStageInfo();});
+es.addEventListener('media',e=>{mediaItems=JSON.parse(e.data).items;renderMedia();});
 es.addEventListener('collect',e=>{const d=JSON.parse(e.data);
   $('collectinfo').textContent=d?`«${d.prompt}» — собрано ${d.count}${d.open?'':' (закрыт)'}`:'';});
 es.addEventListener('scenario',e=>{const d=JSON.parse(e.data);$('scenario').textContent=(d.running?'▶ ':'✔ ')+d.step;});
@@ -301,7 +402,7 @@ async function refresh(){
     if(s.engine_note) banner(s.engine_note);
   }catch(e){}
 }
-netInfo(); scList(); scState(); refresh(); setInterval(refresh,5000);
+netInfo(); mediaList(); scList(); scState(); refresh(); setInterval(refresh,5000);
 </script>
 </body>
 </html>
