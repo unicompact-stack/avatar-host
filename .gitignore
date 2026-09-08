@@ -35,3 +35,4 @@ Thumbs.db
 .venv/
 static/media/*
 !static/media/.gitkeep
+static/sound/

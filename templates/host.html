@@ -133,6 +133,46 @@ const $ = id => document.getElementById(id);
 const vAwait=$('vAwait'), vSpeak=$('vSpeak');
 let audio=null, audioReady=false, currentId=null;
 
+// --- фоновая музыка: звучит постоянно, приглушается под речь ведущего ---
+let bgAudio=null, bgState={bg:null,volume:35,playing:false,duck:22}, ducked=false;
+function bgTargetVol(){
+  const base=(bgState.volume||0)/100;
+  return ducked ? base*((bgState.duck||20)/100) : base;
+}
+function bgFade(to,ms=450){
+  if(!bgAudio) return;
+  const from=bgAudio.volume, t0=performance.now();
+  clearInterval(bgAudio._f);
+  bgAudio._f=setInterval(()=>{
+    const k=Math.min(1,(performance.now()-t0)/ms);
+    bgAudio.volume=Math.max(0,Math.min(1,from+(to-from)*k));
+    if(k>=1) clearInterval(bgAudio._f);
+  },30);
+}
+function applySound(st){
+  if(st) bgState=Object.assign(bgState,st);
+  if(!bgState.bg||!bgState.playing){
+    if(bgAudio){bgFade(0,350);setTimeout(()=>{if(bgAudio){bgAudio.pause();bgAudio=null;}},400);}
+    return;
+  }
+  const url='/static/sound/bg_'+bgState.bg+'.wav';
+  if(!bgAudio||!bgAudio.src.endsWith(url)){
+    if(bgAudio){bgAudio.pause();}
+    bgAudio=new Audio(url); bgAudio.loop=true; bgAudio.volume=0;
+    bgAudio.play().then(()=>bgFade(bgTargetVol(),900))
+      .catch(()=>{$('unlock').classList.add('on');});
+  }else{
+    bgFade(bgTargetVol());
+  }
+}
+function duck(on){ ducked=on; bgFade(bgTargetVol(), on?260:700); }
+
+function playFx(id,volume){
+  const a=new Audio('/static/sound/fx_'+id+'.wav');
+  a.volume=Math.max(0,Math.min(1,(volume==null?80:volume)/100));
+  a.play().catch(()=>{});
+}
+
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function showSpeak(){vAwait.classList.add('hidden');vSpeak.classList.remove('hidden');vSpeak.currentTime=0;vSpeak.play().catch(()=>{});}
 function showAwait(){vSpeak.classList.add('hidden');vAwait.classList.remove('hidden');vAwait.play().catch(()=>{});}
@@ -147,6 +187,7 @@ function tryUnlock(){
 $('unlock').addEventListener('click',()=>{
   const a=new Audio();a.play().catch(()=>{});
   audioReady=true;$('unlock').classList.remove('on');
+  applySound();
 });
 tryUnlock();
 
@@ -154,10 +195,10 @@ function done(id){
   fetch('/api/speech/done',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({id})}).catch(()=>{});
 }
-function stopAudio(){ if(audio){audio.pause();audio=null;} unsub(); showAwait(); }
+function stopAudio(){ if(audio){audio.pause();audio=null;} unsub(); showAwait(); duck(false); }
 
 function play(d){
-  stopAudio(); currentId=d.id; showSpeak(); if(d.text) sub(d.text);
+  stopAudio(); currentId=d.id; showSpeak(); if(d.text) sub(d.text); duck(true);
   audio=new Audio(d.audio_url);
   const finish=()=>{ if(currentId===d.id){ stopAudio(); done(d.id); currentId=null; } };
   audio.onended=finish; audio.onerror=finish;
@@ -267,6 +308,7 @@ function applyState(s){
   renderGuests(s.guests||[]);
   renderQuiz(s.quiz);
   renderStage(s.stage);
+  applySound(s.sound);
 }
 
 let es;
@@ -279,6 +321,8 @@ function connect(){
   es.addEventListener('speak',e=>play(JSON.parse(e.data)));
   es.addEventListener('stop',()=>{stopAudio();currentId=null;});
   es.addEventListener('stage',e=>renderStage(JSON.parse(e.data)));
+  es.addEventListener('sound',e=>applySound(JSON.parse(e.data)));
+  es.addEventListener('sfx',e=>{const d=JSON.parse(e.data);playFx(d.id,d.volume);});
   es.addEventListener('guest_joined',e=>{ const d=JSON.parse(e.data); fetchGuests(); });
   es.addEventListener('guest_greeted',()=>fetchGuests());
   es.addEventListener('quiz_started',e=>renderQuiz(JSON.parse(e.data)));

@@ -67,6 +67,26 @@
   </div>
 
   <div class="card" style="margin-top:14px">
+    <h2>Звук — фоновая музыка и эффекты</h2>
+    <div class="row">
+      <span class="muted" style="align-self:center">Фон:</span>
+      <select id="bg-sel" style="width:auto;max-width:270px;margin:0 6px 6px 0" onchange="setBg(this.value)"></select>
+      <button class="ghost" id="bg-toggle" onclick="toggleBg()">⏸ Пауза</button>
+      <button class="ghost" onclick="setBg('')">Выключить</button>
+    </div>
+    <div class="row" style="margin-top:4px">
+      <span class="muted" style="align-self:center;min-width:90px">Громкость <b id="vol-num">35</b>%</span>
+      <input type="range" id="vol" min="0" max="100" value="35" style="width:190px;margin:0 10px 6px 0"
+        oninput="$('vol-num').textContent=this.value" onchange="setVol(this.value)">
+      <span class="muted" style="align-self:center;min-width:130px">Под голос <b id="duck-num">22</b>%</span>
+      <input type="range" id="duck" min="0" max="100" value="22" style="width:150px;margin:0 6px 6px 0"
+        oninput="$('duck-num').textContent=this.value" onchange="setDuck(this.value)">
+    </div>
+    <div class="row" id="fx-row" style="margin-top:6px"></div>
+    <div id="sound-now" class="muted"></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
     <h2>Экран: что показывать</h2>
     <div class="row">
       <button class="ok" onclick="stage({mode:'avatar'})">🎤 Аватар</button>
@@ -240,6 +260,33 @@ function demoGuests(n,greet){ post('/api/demo/guests',{count:n,greet}); }
 function greet(t){ post('/api/guest/greet',{token:t}); }
 
 // --- сценарий ---
+// --- звук ---
+let sndState={bg:null,volume:35,playing:false,duck:22};
+async function soundCatalog(){
+  const r=await fetch('/api/sound/catalog'); if(!r.ok)return;
+  const c=await r.json();
+  $('bg-sel').innerHTML='<option value="">— без музыки —</option>'+
+    c.backgrounds.map(b=>`<option value="${b.id}">${esc(b.label)}</option>`).join('');
+  $('fx-row').innerHTML='<span class="muted" style="align-self:center">Эффекты:</span>'+
+    c.effects.map(e=>`<button class="ghost" onclick="fx('${e.id}')">${esc(e.label)}</button>`).join('');
+  applySnd(c.state);
+}
+function applySnd(st){
+  if(!st)return; sndState=st;
+  $('bg-sel').value=st.bg||'';
+  $('vol').value=st.volume; $('vol-num').textContent=st.volume;
+  $('duck').value=st.duck; $('duck-num').textContent=st.duck;
+  $('bg-toggle').textContent=st.playing?'⏸ Пауза':'▶ Играть';
+  $('sound-now').textContent=st.bg
+    ? `Играет: ${$('bg-sel').selectedOptions[0].textContent} · ${st.playing?'воспроизведение':'пауза'} · под голос приглушается до ${st.duck}%`
+    : 'Музыка выключена';
+}
+async function setBg(v){ const d=await post('/api/sound/bg',{bg:v,playing:!!v}); if(d&&!d.error)applySnd(d); }
+async function setVol(v){ const d=await post('/api/sound/bg',{volume:+v}); if(d&&!d.error)applySnd(d); }
+async function setDuck(v){ const d=await post('/api/sound/bg',{duck:+v}); if(d&&!d.error)applySnd(d); }
+async function toggleBg(){ const d=await post('/api/sound/bg',{playing:!sndState.playing}); if(d&&!d.error)applySnd(d); }
+async function fx(id){ await post('/api/sound/fx',{id}); }
+
 // --- сцена и медиатека ---
 let mediaItems=[], curStage={mode:'avatar'};
 async function stage(opts){
@@ -365,6 +412,7 @@ function applyState(s){
   $('code').textContent=s.code; $('phase').textContent=s.phase;
   renderQueue(s.queue); renderGuests(s.guests||[]); renderQuiz(s.quiz);
   if(s.stage){curStage=s.stage;renderStageInfo();}
+  if(s.sound&&$('bg-sel').options.length)applySnd(s.sound);
   if(s.collect!==undefined) $('collectinfo').textContent = s.collect
     ? `«${s.collect.prompt}» — собрано ${s.collect.count}${s.collect.open?'':' (закрыт)'}` : '';
   if(!filled){
@@ -389,6 +437,7 @@ es.addEventListener('speak',e=>{const d=JSON.parse(e.data); if(d.note)banner(d.n
 es.addEventListener('error',e=>{try{banner(JSON.parse(e.data).message)}catch(_){}});
 es.addEventListener('scenario_state',e=>scRender(JSON.parse(e.data)));
 es.addEventListener('stage',e=>{curStage=JSON.parse(e.data);renderStageInfo();});
+es.addEventListener('sound',e=>applySnd(JSON.parse(e.data)));
 es.addEventListener('media',e=>{mediaItems=JSON.parse(e.data).items;renderMedia();});
 es.addEventListener('collect',e=>{const d=JSON.parse(e.data);
   $('collectinfo').textContent=d?`«${d.prompt}» — собрано ${d.count}${d.open?'':' (закрыт)'}`:'';});
@@ -402,7 +451,7 @@ async function refresh(){
     if(s.engine_note) banner(s.engine_note);
   }catch(e){}
 }
-netInfo(); mediaList(); scList(); scState(); refresh(); setInterval(refresh,5000);
+netInfo(); soundCatalog(); mediaList(); scList(); scState(); refresh(); setInterval(refresh,5000);
 </script>
 </body>
 </html>

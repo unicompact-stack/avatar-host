@@ -89,6 +89,8 @@ class Event:
             # Сцена: что показывать на экране. avatar | media | celebration | black
             self.stage = {"mode": "avatar", "media": None, "page": 1,
                           "celebration": None, "caption": ""}
+            # Звук: фоновая музыка на экране. duck — приглушение под речь аватара
+            self.sound = {"bg": None, "volume": 35, "playing": False, "duck": 22}
             self.started_at = time.time()
             if not full:
                 self.bus.publish("reset", {})
@@ -195,6 +197,7 @@ class Event:
                 "quiz": self.quiz_public(),
                 "collect": self.collect_public(),
                 "stage": dict(self.stage),
+                "sound": dict(self.sound),
                 "queue": self.queue_snapshot(),
                 "guests": self.guest_list(),
                 "uptime": round(time.time() - self.started_at),
@@ -280,6 +283,28 @@ class Event:
             snap = dict(self.stage)
         self.bus.publish("stage", snap)
         return snap
+
+    # --- звук ---
+    def set_sound(self, bg=None, volume=None, playing=None, duck=None):
+        with self.lock:
+            if bg is not None:
+                self.sound["bg"] = bg or None
+                if bg:
+                    self.sound["playing"] = True
+            if volume is not None:
+                self.sound["volume"] = max(0, min(100, int(volume)))
+            if duck is not None:
+                self.sound["duck"] = max(0, min(100, int(duck)))
+            if playing is not None:
+                self.sound["playing"] = bool(playing)
+            snap = dict(self.sound)
+        self.bus.publish("sound", snap)
+        return snap
+
+    def play_effect(self, effect_id, volume=80):
+        """Разовый звук поверх фона."""
+        self.bus.publish("sfx", {"id": effect_id, "volume": max(0, min(100, int(volume)))})
+        return {"ok": True, "id": effect_id}
 
     # --- сбор пожеланий ---
     def add_wish(self, guest_token, text):

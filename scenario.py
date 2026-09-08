@@ -12,7 +12,7 @@ import time
 
 FORMAT = "avatar-host-scenario"
 STEP_TYPES = {"say", "greet_guests", "quiz", "poll", "collect", "pause", "handoff",
-              "settings", "stage"}
+              "settings", "stage", "sound"}
 STAGE_MODES = ("avatar", "media", "celebration", "black")
 
 
@@ -77,6 +77,9 @@ def validate(data):
                 c = q.get("correct")
                 if c is not None and not (0 <= int(c) < len(opts)):
                     raise ScenarioError(f"Шаг {i} ({sid}), вопрос {j}: «correct» вне диапазона")
+        if t == "sound" and not (s.get("bg") is not None or s.get("sfx")
+                                 or s.get("volume") is not None or "playing" in s):
+            raise ScenarioError(f"Шаг {i} ({sid}): нужен bg, sfx, volume или playing")
         if t == "stage":
             m = s.get("mode", "avatar")
             if m not in STAGE_MODES:
@@ -268,6 +271,26 @@ class Runner:
                 if step.get("voice"):
                     ev.voice = step["voice"]
             ev.bus.publish("state", ev.snapshot())
+
+        # любой шаг может попутно управлять звуком
+        if t == "sound" or "sound" in step or "sfx" in step:
+            sn = step.get("sound") if isinstance(step.get("sound"), dict) else step
+            if sn.get("bg") is not None or sn.get("volume") is not None or "playing" in sn:
+                ev.set_sound(bg=sn.get("bg"), volume=sn.get("volume"),
+                             playing=sn.get("playing"), duck=sn.get("duck"))
+            fx = sn.get("sfx") or step.get("sfx")
+            if fx:
+                ev.play_effect(fx, sn.get("sfx_volume", 80))
+
+        if t == "sound":
+            if step.get("text"):
+                self._say(self.fill(step["text"]), kind="say", priority=3)
+            self._note(f"Звук: {step.get('bg') or step.get('sfx') or 'настройки'}")
+            self.status = "waiting"
+            self._publish()
+            if step["auto_next"]:
+                threading.Thread(target=self._auto_advance, daemon=True).start()
+            return self.state()
 
         # любой шаг может попутно переключить экран
         if t == "stage" or "stage" in step:

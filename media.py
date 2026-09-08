@@ -15,6 +15,26 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEDIA_DIR = os.path.join(BASE_DIR, "static", "media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
+# Постоянные слайды, которые едут вместе с репозиторием (в отличие от
+# static/media, куда ведущий загружает свои файлы и которая в .gitignore).
+BUNDLED_DIR = os.path.join(BASE_DIR, "scenarios", "media")
+
+
+def sync_bundled():
+    """Копируем комплектные слайды в медиатеку, если их там ещё нет."""
+    import shutil
+    if not os.path.isdir(BUNDLED_DIR):
+        return []
+    copied = []
+    for name in sorted(os.listdir(BUNDLED_DIR)):
+        if name.startswith(".") or os.path.splitext(name)[1].lower() not in ALLOWED:
+            continue
+        dst = os.path.join(MEDIA_DIR, name)
+        if not os.path.exists(dst):
+            shutil.copy2(os.path.join(BUNDLED_DIR, name), dst)
+            copied.append(name)
+    return copied
+
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 DOC_EXT = {".pdf"}
 ALLOWED = IMAGE_EXT | DOC_EXT

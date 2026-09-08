@@ -24,6 +24,7 @@ import qrcode
 from flask import (Flask, Response, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 
+import audio_lib
 import tts
 import media
 import netinfo
@@ -31,7 +32,7 @@ import scenario as scenario_mod
 from event_state import EVENT, new_token, public_guest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BUILD = "4.3.0"
+BUILD = "4.4.0"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(16)
@@ -124,6 +125,16 @@ def cleanup_worker():
         time.sleep(600)
 
 
+def sound_worker():
+    copied = media.sync_bundled()
+    if copied:
+        print(f"  Комплектных слайдов добавлено: {len(copied)}")
+    created = audio_lib.ensure_all()
+    if created:
+        print(f"  Сгенерировано звуков: {len(created)}")
+
+
+threading.Thread(target=sound_worker, daemon=True).start()
 threading.Thread(target=speech_worker, daemon=True).start()
 threading.Thread(target=cleanup_worker, daemon=True).start()
 
@@ -590,6 +601,40 @@ def api_scenario_action(action):
     except scenario_mod.ScenarioError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"error": "Неизвестное действие"}), 404
+
+
+# ---------------------------------------------------------------- звук
+
+@app.route("/api/sound/catalog")
+@require_admin
+def api_sound_catalog():
+    cat = audio_lib.catalog()
+    cat["state"] = dict(EVENT.sound)
+    return jsonify(cat)
+
+
+@app.route("/api/sound/bg", methods=["POST"])
+@require_admin
+def api_sound_bg():
+    """Фоновая музыка: выбрать трек, громкость, пауза."""
+    d = request.get_json(force=True, silent=True) or {}
+    bg = d.get("bg")
+    if bg and bg not in audio_lib.BACKGROUND_IDS:
+        return jsonify({"error": "Неизвестный трек"}), 400
+    return jsonify(EVENT.set_sound(bg=bg if "bg" in d else None,
+                                   volume=d.get("volume"), playing=d.get("playing"),
+                                   duck=d.get("duck")))
+
+
+@app.route("/api/sound/fx", methods=["POST"])
+@require_admin
+def api_sound_fx():
+    """Разовый эффект: фанфары, аплодисменты, дробь."""
+    d = request.get_json(force=True, silent=True) or {}
+    fx = d.get("id")
+    if fx not in audio_lib.EFFECT_IDS:
+        return jsonify({"error": "Неизвестный звук"}), 400
+    return jsonify(EVENT.play_effect(fx, d.get("volume", 80)))
 
 
 # ---------------------------------------------------------------- медиатека
