@@ -44,3 +44,44 @@ except ImportError: ok(len(b)>200,"QR-код генерируется")
 # 5. Выход
 s,_=call("/admin/logout",{},opener=op); ok(s==200,"выход из пульта")
 s,_=call("/api/say",{"text":"x"},opener=op); ok(s==401,"после выхода управление снова закрыто")
+
+# --- вход без cookie (iframe-превью, кросс-сайт) ---
+import urllib.parse
+nock=urllib.request.build_opener()   # опенер БЕЗ хранения cookie
+r=urllib.request.Request(B+"/admin",data=b"pin=1234",
+    headers={"Content-Type":"application/x-www-form-urlencoded"})
+class NoRedir(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,*a,**k): return None
+try:
+    urllib.request.build_opener(NoRedir).open(r,timeout=10)
+    loc=""
+except urllib.error.HTTPError as e:
+    loc=e.headers.get("Location","")
+tok=loc.split("t=")[-1] if "t=" in loc else ""
+ok(bool(tok),f"после ввода PIN выдаётся токен: {tok[:10]}…")
+s,b=call("/admin?t="+tok,opener=nock)
+ok(s==200 and "Пульт ведущего" in b.decode(),"пульт открывается по токену БЕЗ cookie")
+def tok_call(p,d=None):
+    rq=urllib.request.Request(B+p,data=json.dumps(d).encode() if d is not None else None,
+        headers={'Content-Type':'application/json','X-Admin-Token':tok},
+        method='POST' if d is not None else 'GET')
+    try:
+        with nock.open(rq,timeout=10) as f: return f.status
+    except urllib.error.HTTPError as e: return e.code
+ok(tok_call("/api/say",{"text":"проверка токена"})==200,"API работает по заголовку X-Admin-Token")
+ok(tok_call("/api/network")==200,"GET-ручки тоже пускают по токену")
+def bad_tok(v):
+    rq=urllib.request.Request(B+"/api/say",data=b'{"text":"x"}',
+        headers={'Content-Type':'application/json','X-Admin-Token':v})
+    try:
+        with nock.open(rq,timeout=10) as f: return f.status
+    except urllib.error.HTTPError as e: return e.code
+# кириллицу в HTTP-заголовок не пропустит сам клиент, поэтому шлём её в теле
+rq=urllib.request.Request(B+"/api/say",
+    data=json.dumps({"text":"x","_t":"подделка"}).encode(),
+    headers={'Content-Type':'application/json'})
+try:
+    with nock.open(rq,timeout=10) as f: code=f.status
+except urllib.error.HTTPError as e: code=e.code
+ok(code==401,"кириллический мусор в токене → 401, а не 500")
+ok(bad_tok("wrongtoken123")==401,"неверный токен отклонён")

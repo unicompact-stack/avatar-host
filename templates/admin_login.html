@@ -26,7 +26,7 @@
 <body>
 <div class="card">
   <h1>Пульт ведущего</h1>
-  <div class="muted">Введите PIN, он показан в окне сервера</div>
+  <div class="muted">Введите PIN — он напечатан в окне сервера при запуске</div>
   {% if error %}<div class="err">{{ error }}</div>{% endif %}
   <form method="post">
     <input name="pin" inputmode="numeric" maxlength="8" placeholder="····" autofocus autocomplete="off">

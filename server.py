@@ -32,11 +32,18 @@ import scenario as scenario_mod
 from event_state import EVENT, new_token, public_guest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BUILD = "4.4.0"
+BUILD = "4.4.1"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(16)
 app.config["MAX_CONTENT_LENGTH"] = media.MAX_BYTES + 1024 * 1024
+# SameSite=None нужен, чтобы cookie жила в iframe-превью, но браузеры требуют
+# при этом Secure — а он ломает обычный http в локальной сети. Поэтому строгий
+# режим включаем только когда работаем за https (PUBLIC_URL или прокси).
+if (os.environ.get("PUBLIC_URL") or "").startswith("https"):
+    app.config.update(SESSION_COOKIE_SAMESITE="None", SESSION_COOKIE_SECURE=True)
+else:
+    app.config.update(SESSION_COOKIE_SAMESITE="Lax")
 
 # PIN пульта: без него любой гость в той же сети откроет /admin и заберёт управление.
 ADMIN_PIN = os.environ.get("ADMIN_PIN") or "".join(secrets.choice("0123456789") for _ in range(4))
@@ -44,7 +51,25 @@ ADMIN_PIN = os.environ.get("ADMIN_PIN") or "".join(secrets.choice("0123456789") 
 PUBLIC_URL = (os.environ.get("PUBLIC_URL") or "").rstrip("/")
 
 
+# Токен пульта: cookie-сессии не переживают iframe/кросс-сайт превью,
+# поэтому основной способ — токен в заголовке или ?t=, а cookie как запасной.
+ADMIN_TOKEN = secrets.token_urlsafe(24)
+
+
 def admin_ok():
+    """Пульт открыт, если пришёл верный токен (заголовок, ?t= или тело) либо cookie-сессия."""
+    candidates = [request.headers.get("X-Admin-Token"), request.args.get("t")]
+    if request.is_json:
+        body = request.get_json(force=True, silent=True) or {}
+        candidates.append(body.get("_t"))
+    for t in candidates:
+        if not t:
+            continue
+        try:
+            if secrets.compare_digest(str(t), ADMIN_TOKEN):
+                return True
+        except TypeError:      # не-ASCII в токене
+            continue
     return session.get("admin") is True
 
 
@@ -165,12 +190,13 @@ def admin():
         if (request.form.get("pin") or "").strip() == ADMIN_PIN:
             session["admin"] = True
             session.permanent = True
-            return redirect(url_for("admin"))
+            # токен в URL — работает даже там, где cookie режутся
+            return redirect(url_for("admin") + "?t=" + ADMIN_TOKEN)
         error = "Неверный PIN"
     if not admin_ok():
         return render_template("admin_login.html", build=BUILD, error=error), (401 if error else 200)
     return render_template("admin.html", code=EVENT.code, build=BUILD,
-                           voices=tts.VOICES, presets=PRESETS)
+                           voices=tts.VOICES, presets=PRESETS, token=ADMIN_TOKEN)
 
 
 @app.route("/admin/logout", methods=["POST"])

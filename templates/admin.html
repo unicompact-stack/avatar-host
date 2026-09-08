@@ -235,10 +235,24 @@
 
 <script>
 const $=id=>document.getElementById(id);
+
+// Токен пульта: cookie не работают в iframe-превью, поэтому шлём его явно
+// в заголовке каждого запроса. Берём из шаблона, дублируем в localStorage.
+const TOKEN = "{{ token }}" || localStorage.getItem('adminToken') || '';
+if(TOKEN) localStorage.setItem('adminToken', TOKEN);
+const _fetch = window.fetch.bind(window);
+window.fetch = (url, opts={}) => {
+  const u = String(url);
+  if(u.startsWith('/')){
+    opts.headers = Object.assign({}, opts.headers, {'X-Admin-Token': TOKEN});
+    opts.credentials = 'include';
+  }
+  return _fetch(url, opts);
+};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function post(url,body){
   try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
-    if(r.status===401){ location.reload(); return; }
+    if(r.status===401){ banner('Сессия пульта потеряна — обновите страницу и введите PIN'); return; }
     const d=await r.json(); if(d.error) banner(d.error); return d;}catch(e){banner('Сеть недоступна');}
 }
 function banner(msg){ const b=$('banner'); if(!msg){b.classList.remove('on');return;} b.textContent=msg; b.classList.add('on'); }
@@ -422,7 +436,7 @@ function applyState(s){
     filled=true;
   }
 }
-const es=new EventSource('/api/stream');
+const es=new EventSource('/api/stream?t='+encodeURIComponent(TOKEN));
 es.addEventListener('open',()=>{$('link').textContent='эфир';});
 es.addEventListener('hello',e=>applyState(JSON.parse(e.data)));
 es.addEventListener('state',e=>applyState(JSON.parse(e.data)));

@@ -86,6 +86,7 @@ ok(any("Андрей Викторович" in t for t in spoken),"имя юби�
 ok(any("желает" in t for t in spoken),"пожелания зачитаны вслух")
 ok(any("гост" in t for t in spoken),"склонение числительных работает")
 st2=call("/api/state")[1]["stage"]
-ok(st2["mode"] in ("celebration","avatar"),f"экран переключался сценарием, финал: {st2['mode']}, подпись «{st2.get('caption','')}»")
+# финальный шаг сценария показывает прощальный слайд, поэтому media тоже норма
+ok(st2["mode"] in ("celebration","avatar","media"),f"экран переключался сценарием, финал: {st2['mode']}, подпись «{st2.get('caption','')}»")
 print("\nпримеры реплик:")
 for t in spoken[:3]+spoken[-3:]: print("  •",t[:95])
