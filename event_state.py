@@ -90,7 +90,8 @@ class Event:
             self.stage = {"mode": "avatar", "media": None, "page": 1,
                           "celebration": None, "caption": ""}
             # Звук: фоновая музыка на экране. duck — приглушение под речь аватара
-            self.sound = {"bg": None, "volume": 35, "playing": False, "duck": 22}
+            self.sound = {"bg": None, "volume": 35, "playing": False, "duck": 22,
+                          "url": None, "label": "", "kind": None}
             self.started_at = time.time()
             if not full:
                 self.bus.publish("reset", {})
@@ -289,6 +290,13 @@ class Event:
         with self.lock:
             if bg is not None:
                 self.sound["bg"] = bg or None
+                # сразу запоминаем, что именно играть и как это называется,
+                # чтобы экран и пульт показывали название трека
+                import music
+                kind, url, label, _err = music.resolve(bg or None)
+                self.sound["kind"] = kind
+                self.sound["url"] = url
+                self.sound["label"] = label
                 if bg:
                     self.sound["playing"] = True
             if volume is not None:

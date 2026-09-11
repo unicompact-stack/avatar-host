@@ -36,3 +36,7 @@ Thumbs.db
 static/media/*
 !static/media/.gitkeep
 static/sound/
+
+# своя музыка ведущего — файлы личные и тяжёлые, в репозиторий не едут
+music/*
+!music/ПРОЧТИ-МЕНЯ.txt

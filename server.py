@@ -27,12 +27,13 @@ from flask import (Flask, Response, jsonify, redirect, render_template, request,
 import audio_lib
 import tts
 import media
+import music
 import netinfo
 import scenario as scenario_mod
 from event_state import EVENT, new_token, public_guest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BUILD = "4.4.1"
+BUILD = "4.5.0"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(16)
@@ -151,6 +152,7 @@ def cleanup_worker():
 
 
 def sound_worker():
+    music.ensure_dir()
     copied = media.sync_bundled()
     if copied:
         print(f"  Комплектных слайдов добавлено: {len(copied)}")
@@ -645,8 +647,12 @@ def api_sound_bg():
     """Фоновая музыка: выбрать трек, громкость, пауза."""
     d = request.get_json(force=True, silent=True) or {}
     bg = d.get("bg")
-    if bg and bg not in audio_lib.BACKGROUND_IDS:
-        return jsonify({"error": "Неизвестный трек"}), 400
+    if bg:
+        kind, url, label, err = music.resolve(bg)
+        if err:
+            return jsonify({"error": err}), 400
+        if kind == "gen" and bg.replace("gen:", "") not in audio_lib.BACKGROUND_IDS:
+            return jsonify({"error": "Неизвестный трек"}), 400
     return jsonify(EVENT.set_sound(bg=bg if "bg" in d else None,
                                    volume=d.get("volume"), playing=d.get("playing"),
                                    duck=d.get("duck")))
@@ -661,6 +667,23 @@ def api_sound_fx():
     if fx not in audio_lib.EFFECT_IDS:
         return jsonify({"error": "Неизвестный звук"}), 400
     return jsonify(EVENT.play_effect(fx, d.get("volume", 80)))
+
+
+@app.route("/music/<path:rel>")
+def serve_music(rel):
+    """Отдаёт свой трек из папки music/ (нужен экрану для воспроизведения)."""
+    full = music.file_path(rel)
+    if not full:
+        return jsonify({"error": "Файл не найден"}), 404
+    return send_file(full, conditional=True)
+
+
+@app.route("/api/music/list")
+@require_admin
+def api_music_list():
+    """Свои треки из папки music/ + список радиостанций."""
+    return jsonify({"tracks": music.scan(), "radio": music.radio_list(),
+                    "status": music.status()})
 
 
 # ---------------------------------------------------------------- медиатека

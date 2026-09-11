@@ -155,10 +155,19 @@ function applySound(st){
     if(bgAudio){bgFade(0,350);setTimeout(()=>{if(bgAudio){bgAudio.pause();bgAudio=null;}},400);}
     return;
   }
-  const url='/static/sound/bg_'+bgState.bg+'.wav';
-  if(!bgAudio||!bgAudio.src.endsWith(url)){
+  // адрес приходит с сервера: свой файл, радиопоток или синтезированный трек
+  const url=bgState.url||('/static/sound/bg_'+bgState.bg+'.wav');
+  const isRadio=(bgState.kind==='radio');
+  if(!bgAudio||bgAudio._url!==url){
     if(bgAudio){bgAudio.pause();}
-    bgAudio=new Audio(url); bgAudio.loop=true; bgAudio.volume=0;
+    bgAudio=new Audio(url); bgAudio._url=url;
+    bgAudio.loop=!isRadio;            // радио зацикливать нельзя, это живой поток
+    bgAudio.preload='auto';
+    bgAudio.crossOrigin='anonymous';
+    bgAudio.volume=0;
+    // радио и длинные mp3 иногда обрываются — молча поднимаем заново
+    bgAudio.onerror=()=>{ if(bgState.playing) setTimeout(()=>{bgAudio=null;applySound();},4000); };
+    if(isRadio) bgAudio.onended=()=>{ if(bgState.playing){bgAudio=null;applySound();} };
     bgAudio.play().then(()=>bgFade(bgTargetVol(),900))
       .catch(()=>{$('unlock').classList.add('on');});
   }else{

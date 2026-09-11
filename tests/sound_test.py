@@ -67,3 +67,56 @@ s,d=call("/api/scenario/load",{"content":json.dumps({"format":"avatar-host-scena
   "meta":{"title":"X"},"steps":[{"type":"sound"}]})})
 ok(s==400,"пустой звуковой шаг отклонён: "+d["error"][:45])
 call("/api/sound/bg",{"bg":""}); call("/api/speech/clear",{})
+
+# --- своя музыка из папки music/ и радио ---
+import shutil, urllib.parse
+MUS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "music")
+os.makedirs(os.path.join(MUS, "Тесты"), exist_ok=True)
+src = "static/sound/bg_lounge.wav"
+own = os.path.join(MUS, "Тестовый трек.wav")
+nested = os.path.join(MUS, "Тесты", "Вложенный.wav")
+shutil.copy(src, own); shutil.copy(src, nested)
+
+s, lst = call("/api/music/list")
+ids = [t["id"] for t in lst["tracks"]]
+ok(s == 200 and "file:Тестовый трек.wav" in ids, "свой файл найден в папке music/")
+ok("file:Тесты/Вложенный.wav" in ids, "файл из подпапки тоже виден")
+ok(any(t["group"] == "Тесты" for t in lst["tracks"]), "подпапка становится группой в списке")
+ok(not lst["status"]["empty"], "статус: папка не пуста")
+ok(len(lst["radio"]) >= 10, f"радиостанций не меньше 10: {len(lst['radio'])}")
+ok(all(r["url"].startswith("https://") for r in lst["radio"]),
+   "все радиопотоки по https (иначе браузер заблокирует)")
+ok(all(r.get("genre") for r in lst["radio"]), "у каждой радиостанции подписан жанр")
+
+s, d = call("/api/sound/bg", {"bg": "file:Тестовый трек.wav", "playing": True})
+ok(s == 200 and d["kind"] == "file", "свой файл выбран как фон")
+ok(d["label"] == "Тестовый трек", f"видно название трека: {d['label']}")
+ok(bool(d["url"]), "в состоянии есть адрес для проигрывания")
+
+# сам файл должен реально отдаваться экрану
+r = urllib.request.Request(B + d["url"])
+with op.open(r, timeout=20) as f:
+    body = f.read()
+ok(len(body) > 10000, f"файл отдаётся по /music/ ({len(body)//1024} КБ)")
+
+s, d = call("/api/sound/bg", {"bg": "radio:retro"})
+ok(s == 200 and d["kind"] == "radio" and d["label"] == "Ретро FM", "радио выбирается и подписано")
+ok(d["url"].startswith("https://"), "у радио отдаётся прямой поток")
+
+s, d = call("/api/sound/bg", {"bg": "file:такого-нет.mp3"})
+ok(s == 400 and "не найден" in d.get("error", ""), "пропавший файл → понятная ошибка, а не тишина")
+s, d = call("/api/sound/bg", {"bg": "radio:такого-нет"})
+ok(s == 400, "неизвестная радиостанция отклонена")
+
+# защита: нельзя утащить файл за пределы папки music/
+try:
+    with op.open(urllib.request.Request(B + "/music/../server.py"), timeout=20) as f:
+        code = f.status
+except urllib.error.HTTPError as e:
+    code = e.code
+ok(code == 404, "нельзя вытащить файл за пределы папки music/")
+
+s, d = call("/api/sound/bg", {"bg": "lounge"})
+ok(s == 200 and d["kind"] == "gen", "старый формат из сценариев по-прежнему работает")
+
+os.remove(own); os.remove(nested); os.rmdir(os.path.join(MUS, "Тесты"))
