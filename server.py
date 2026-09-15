@@ -25,6 +25,7 @@ from flask import (Flask, Response, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 
 import audio_lib
+import games
 import tts
 import media
 import music
@@ -33,7 +34,7 @@ import scenario as scenario_mod
 from event_state import EVENT, new_token, public_guest
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BUILD = "4.5.0"
+BUILD = "4.6.0"
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(16)
@@ -444,6 +445,8 @@ def api_guest_me():
         "guest": public_guest(guest),
         "quiz": EVENT.quiz_public(),
         "collect": EVENT.collect_public(),
+        "game": EVENT.game_public(),
+        "mine": EVENT.game_guest_view(token),
         "phase": EVENT.phase,
         "title": EVENT.title,
     })
@@ -498,6 +501,93 @@ def api_quiz_close():
 @app.route("/api/leaderboard")
 def api_leaderboard():
     return jsonify({"rows": EVENT.leaderboard()})
+
+
+# ---------------------------------------------------------------- конкурсы
+
+@app.route("/api/games/catalog")
+def api_games_catalog():
+    return jsonify({"games": games.CATALOG})
+
+
+@app.route("/api/games/start", methods=["POST"])
+@require_admin
+def api_games_start():
+    d = request.get_json(force=True, silent=True) or {}
+    gtype = str(d.get("type", "")).strip()
+    try:
+        snap = EVENT.start_game(gtype, d.get("config") or {})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(snap)
+
+
+@app.route("/api/games/stop", methods=["POST"])
+@require_admin
+def api_games_stop():
+    EVENT.stop_game()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/games/state")
+def api_games_state():
+    return jsonify({"game": EVENT.game_public()})
+
+
+@app.route("/api/games/action", methods=["POST"])
+@require_admin
+def api_games_action():
+    d = request.get_json(force=True, silent=True) or {}
+    snap, err = EVENT.game_action(str(d.get("action", "")), d.get("params") or {})
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify(snap)
+
+
+@app.route("/api/games/noise", methods=["POST"])
+def api_games_noise():
+    """Экран зала шлёт уровень с микрофона ноутбука. Без админки: экран не пульт."""
+    d = request.get_json(force=True, silent=True) or {}
+    if not EVENT.game or EVENT.game.get("type") != "noise":
+        return jsonify({"error": "Шумомер не запущен"}), 400
+    snap, err = EVENT.game_action("level", {"level": d.get("level")})
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/games/submit", methods=["POST"])
+def api_games_submit():
+    d = request.get_json(force=True, silent=True) or {}
+    snap, err = EVENT.game_submit(str(d.get("token", "")), d.get("payload") or {})
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------- счёт вечера
+
+@app.route("/api/score/add", methods=["POST"])
+@require_admin
+def api_score_add():
+    d = request.get_json(force=True, silent=True) or {}
+    snap, err = EVENT.score_add(d.get("team", ""), int(d.get("points") or 0))
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify(snap)
+
+
+@app.route("/api/score/reset", methods=["POST"])
+@require_admin
+def api_score_reset():
+    return jsonify(EVENT.score_reset())
+
+
+@app.route("/api/score/show", methods=["POST"])
+@require_admin
+def api_score_show():
+    d = request.get_json(force=True, silent=True) or {}
+    return jsonify(EVENT.score_show(bool(d.get("on"))))
 
 
 # ---------------------------------------------------------------- демо-режим

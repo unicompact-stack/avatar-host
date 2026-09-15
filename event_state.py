@@ -86,6 +86,9 @@ class Event:
             self.history = []
             self.quiz = None
             self.collect = None      # сбор пожеланий с телефонов
+            self.game = None         # активный конкурс (games.py)
+            self.scores = {}         # команда (стол) -> очки вечера
+            self.scoreboard_on = False
             # Сцена: что показывать на экране. avatar | media | celebration | black
             self.stage = {"mode": "avatar", "media": None, "page": 1,
                           "celebration": None, "caption": ""}
@@ -197,6 +200,8 @@ class Event:
                 "pitch": self.pitch,
                 "quiz": self.quiz_public(),
                 "collect": self.collect_public(),
+                "game": self.game_public(),
+                "scoreboard": self.scoreboard_public(),
                 "stage": dict(self.stage),
                 "sound": dict(self.sound),
                 "queue": self.queue_snapshot(),
@@ -267,6 +272,98 @@ class Event:
             "tally": tally,
             "correct": q["correct"],
         }
+
+    # --- конкурсы (games.py) ---
+    def start_game(self, gtype, config=None):
+        import games
+        with self.lock:
+            guests = [dict(g) for g in self.guests.values()]
+            g = games.start(gtype, config, guests)
+            self.game = g
+            snap = games.public(g, guests)
+        self.bus.publish("game", snap)
+        return snap
+
+    def stop_game(self):
+        with self.lock:
+            self.game = None
+        self.bus.publish("game", None)
+        return None
+
+    def game_submit(self, guest_token, payload):
+        import games
+        with self.lock:
+            guest = self.guests.get(guest_token)
+            if not guest:
+                return None, "Гость не найден"
+            ok, err = games.submit(self.game, guest, payload)
+            if not ok:
+                return None, err
+            snap = games.public(self.game, [dict(x) for x in self.guests.values()])
+        self.bus.publish("game", snap)
+        return snap, None
+
+    def game_action(self, name, params=None):
+        import games
+        with self.lock:
+            guests = [dict(g) for g in self.guests.values()]
+            ok, err = games.action(self.game, name, params, guests)
+            if not ok:
+                return None, err
+            snap = games.public(self.game, guests)
+        self.bus.publish("game", snap)
+        return snap, None
+
+    def game_public(self):
+        import games
+        with self.lock:
+            if not self.game:
+                return None
+            return games.public(self.game, [dict(g) for g in self.guests.values()])
+
+    def game_guest_view(self, guest_token):
+        import games
+        with self.lock:
+            guest = self.guests.get(guest_token)
+            if not guest or not self.game:
+                return None
+            return games.guest_view(self.game, guest)
+
+    # --- счёт вечера по столам ---
+    def score_add(self, team, points):
+        import games
+        with self.lock:
+            if not str(team).strip():
+                return None, "Укажите команду"
+            team = games.team_of({"table": str(team)})
+            self.scores[team] = self.scores.get(team, 0) + int(points)
+            snap = self.scoreboard_public()
+        self.bus.publish("scoreboard", snap)
+        return snap, None
+
+    def score_reset(self):
+        with self.lock:
+            self.scores = {}
+            snap = self.scoreboard_public()
+        self.bus.publish("scoreboard", snap)
+        return snap
+
+    def score_show(self, on):
+        with self.lock:
+            self.scoreboard_on = bool(on)
+            snap = self.scoreboard_public()
+        self.bus.publish("scoreboard", snap)
+        return snap
+
+    def scoreboard_public(self):
+        import games
+        teams = games.teams_from_guests([dict(g) for g in self.guests.values()])
+        for t in self.scores:
+            if t not in teams:
+                teams.append(t)
+        rows = [{"team": t, "score": self.scores.get(t, 0)} for t in teams]
+        rows.sort(key=lambda r: (-r["score"], r["team"]))
+        return {"on": self.scoreboard_on, "rows": rows}
 
     # --- сцена экрана ---
     def set_stage(self, mode=None, media=None, page=None, celebration=None, caption=None):

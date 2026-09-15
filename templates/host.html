@@ -86,6 +86,58 @@
   #unlock.on{display:flex}
   #unlock b{font-size:30px}#unlock p{color:#8fa9c4}
   .pill{padding:12px 28px;border-radius:999px;background:#2563eb;font-weight:700;font-size:18px}
+
+  /* --- конкурсы на экран зала --- */
+  .game{position:absolute;inset:4% 4% 84px 4%;z-index:14;background:rgba(6,14,26,.94);
+    border:1px solid #23405f;border-radius:20px;padding:26px 30px;display:none;flex-direction:column}
+  .game.on{display:flex}
+  .game h2{font-size:34px;margin-bottom:4px}
+  .game .sub{color:#8fa9c4;font-size:17px;margin-bottom:16px}
+  .game .body{flex:1;overflow:hidden;display:flex;flex-direction:column;justify-content:center}
+  .cloud{display:flex;flex-wrap:wrap;gap:10px 20px;align-items:center;justify-content:center}
+  .cloud span{font-weight:800;line-height:1.1;animation:pop .4s}
+  .race{display:flex;flex-direction:column;gap:14px}
+  .lane{background:#0d1a2b;border:1px solid #1e3550;border-radius:14px;padding:10px 14px}
+  .lane .top{display:flex;justify-content:space-between;font-size:22px;font-weight:700;margin-bottom:8px}
+  .lane .track{height:22px;background:#0a1420;border-radius:999px;overflow:hidden}
+  .lane .fill{height:100%;background:linear-gradient(90deg,#2563eb,#4cc9f0);width:0;transition:width .25s}
+  .lane.lead .fill{background:linear-gradient(90deg,#ffd166,#f78c6b)}
+  .bets{display:flex;gap:16px}
+  .bet{flex:1;background:#0d1a2b;border:2px solid #1e3550;border-radius:16px;padding:16px;text-align:center}
+  .bet.win{border-color:#3fbf8f;background:#123326}
+  .bet .nm{font-size:26px;font-weight:700;margin-bottom:8px}
+  .bet .co{font-size:40px;font-weight:900;color:#ffd166}
+  .bet .po{color:#8fa9c4;font-size:15px;margin-top:6px}
+  .bingo-last{font-size:40px;font-weight:800;text-align:center;line-height:1.25}
+  .bingo-meta{text-align:center;color:#8fa9c4;font-size:19px;margin-top:14px}
+  .numbers{display:flex;flex-wrap:wrap;gap:14px;justify-content:center}
+  .numcard{width:210px;min-height:130px;background:#0d1a2b;border:2px solid #1e3550;border-radius:16px;
+    padding:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+  .numcard.open{border-color:#ffd166;background:#2a2410}
+  .numcard .n{font-size:46px;font-weight:900;color:#ffd166}
+  .numcard .t{font-size:16px;color:#cfe0f0;margin-top:6px}
+  .toast-card{text-align:center}
+  .toast-card .who{font-size:44px;font-weight:900;margin-bottom:18px}
+  .toast-row{font-size:26px;margin:8px 0}
+  .toast-row b{color:#ffd166}
+  .dance{text-align:center}
+  .dance .name{font-size:76px;font-weight:900;color:#ffd166;margin-bottom:10px}
+  .dance .hint{font-size:24px;color:#8fa9c4}
+  .noise{text-align:center}
+  .noise .who{font-size:34px;font-weight:800;margin-bottom:14px}
+  .noise .bar{height:46px;background:#0a1420;border-radius:999px;overflow:hidden;margin-bottom:8px}
+  .noise .fill{height:100%;width:0;background:linear-gradient(90deg,#3fbf8f,#ffd166,#ef476f);transition:width .12s}
+  .glist{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin-top:14px}
+  .gpill{background:#12243a;border:1px solid #24405e;border-radius:999px;padding:8px 16px;font-size:19px}
+  .gpill b{color:#ffd166}
+  /* таблица счёта вечера */
+  .score{position:absolute;top:80px;right:26px;z-index:17;background:rgba(6,14,26,.92);
+    border:1px solid #23405f;border-radius:16px;padding:14px 18px;min-width:230px;display:none}
+  .score.on{display:block}
+  .score h3{font-size:15px;color:#8fa9c4;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+  .score .row{display:flex;justify-content:space-between;gap:16px;font-size:21px;padding:4px 0}
+  .score .row b{color:#ffd166}
+  .score .row.top{font-weight:800}
   #status{position:fixed;top:10px;right:14px;z-index:50;font-size:12px;color:#5d7286}
   #status.bad{color:#e0864f}
 </style>
@@ -111,6 +163,12 @@
       <div class="quiz-opts" id="q-opts"></div>
       <div class="quiz-meta" id="q-meta"></div>
     </div>
+    <div class="game" id="game">
+      <h2 id="g-title"></h2>
+      <div class="sub" id="g-sub"></div>
+      <div class="body" id="g-body"></div>
+    </div>
+    <div class="score" id="score"><h3>Счёт вечера</h3><div id="score-rows"></div></div>
     <div class="subtitles"><div class="text" id="sub"></div></div>
   </div>
 
@@ -290,6 +348,136 @@ function startCelebration(kind){
   spawn(); celTimer=setInterval(spawn, kind==='confetti'?260:900);
 }
 
+
+// --- конкурсы на экране зала ---
+let gameId=null, noiseMic=null;
+function renderGame(g){
+  const box=$('game');
+  if(!g){ box.classList.remove('on'); gameId=null; stopNoiseMic(); return; }
+  box.classList.add('on');
+  if(g.id!==gameId){ gameId=g.id; $('g-body').innerHTML=''; }
+  $('g-title').textContent=g.title;
+  const R={wordcloud:gWordcloud,taprace:gTaprace,bets:gBets,bingo:gBingo,
+           numbers:gNumbers,toast:gToast,dancewheel:gDance,noise:gNoise}[g.type];
+  if(R) R(g);
+  if(g.type==='noise') ensureNoiseMic(); else stopNoiseMic();
+}
+function gWordcloud(g){
+  $('g-sub').textContent=g.prompt+(g.open?' · отвечайте с телефона':' · приём закрыт');
+  if(!g.words.length){ $('g-body').innerHTML='<div class="bingo-meta">Ждём первые слова…</div>'; return; }
+  const max=g.words[0].count;
+  $('g-body').innerHTML='<div class="cloud">'+g.words.map(w=>{
+    const k=w.count/max, size=Math.round(26+k*72);
+    const col=k>.75?'#ffd166':k>.45?'#4cc9f0':'#cfe0f0';
+    return `<span style="font-size:${size}px;color:${col}">${esc(w.word)}</span>`;
+  }).join('')+'</div>';
+}
+function gTaprace(g){
+  $('g-sub').textContent=g.open?`Жмите кнопку на телефоне! Осталось ${g.left} с`:'Финиш!';
+  const lead=g.rows.length?g.rows[0].taps:0;
+  $('g-body').innerHTML='<div class="race">'+g.rows.map(r=>
+    `<div class="lane ${r.taps===lead&&lead>0?'lead':''}">
+       <div class="top"><span>${esc(r.team)}</span><span>${r.taps}</span></div>
+       <div class="track"><div class="fill" style="width:${r.pct}%"></div></div>
+     </div>`).join('')+'</div>';
+}
+function gBets(g){
+  const res=g.result;
+  $('g-sub').textContent=res?`Круг ${g.round} · банк ${g.bank} разыгран`
+    :`${g.question} · банк ${g.bank} · ставок ${g.answered}`;
+  $('g-body').innerHTML='<div class="bets">'+g.options.map((o,i)=>
+    `<div class="bet ${res&&res.correct===i?'win':''}">
+       <div class="nm">${esc(o)}</div>
+       <div class="co">${g.coef[i]?('×'+g.coef[i]):'—'}</div>
+       <div class="po">${g.tally[i]} ставок · ${g.pot[i]} фишек</div>
+     </div>`).join('')+'</div>'+
+    (g.board.length?'<div class="glist">'+g.board.slice(0,8).map(b=>
+      `<div class="gpill">${esc(b.name)} <b>${b.balance}</b></div>`).join('')+'</div>':'');
+}
+function gBingo(g){
+  $('g-sub').textContent=`Отмечено событий: ${g.marked.length} · следите за своей карточкой`;
+  $('g-body').innerHTML=
+    (g.last?`<div class="bingo-last">✅ ${esc(g.last)}</div>`:'<div class="bingo-meta">Ждём первое событие вечера…</div>')+
+    (g.winners.length?`<div class="glist">`+g.winners.map(w=>`<div class="gpill">🎉 <b>${esc(w)}</b></div>`).join('')+'</div>':'');
+}
+function gNumbers(g){
+  $('g-sub').textContent=g.left?`Осталось разгадать: ${g.left}`:'Все цифры раскрыты';
+  $('g-body').innerHTML='<div class="numbers">'+g.cards.map(c=>
+    `<div class="numcard ${c.open?'open':''}"><div class="n">${esc(c.n)}</div>
+     ${c.open?`<div class="t">${esc(c.text)}</div>`:'<div class="t">?</div>'}</div>`).join('')+'</div>';
+}
+function gToast(g){
+  const c=g.current;
+  $('g-sub').textContent=`Тостов собрано: ${g.shown}`;
+  $('g-body').innerHTML=c?`<div class="toast-card">
+    <div class="who">${esc(c.guest||'Кто смелый?')}</div>
+    <div class="toast-row">Говорит <b>${esc(c.who)}</b></div>
+    <div class="toast-row">В стиле: <b>${esc(c.tone)}</b></div>
+    <div class="toast-row">Условие: <b>${esc(c.detail)}</b></div>
+    <div class="toast-row"><b>${esc(c.finish)}</b></div></div>`
+    :'<div class="bingo-meta">Ведущий крутит первый тост…</div>';
+}
+function gDance(g){
+  $('g-sub').textContent='Колесо танцев';
+  const c=g.current;
+  $('g-body').innerHTML=c?`<div class="dance"><div class="name">${esc(c.name)}</div>
+    <div class="hint">${esc(c.hint||'')}</div></div>`
+    :'<div class="bingo-meta">Крутим колесо!</div>';
+}
+function gNoise(g){
+  $('g-sub').textContent=g.active?`Кричит: ${g.active}`:'Выберите команду на пульте';
+  $('g-body').innerHTML=`<div class="noise">
+    <div class="who">${g.active?esc(g.active):'—'}</div>
+    <div class="bar"><div class="fill" id="noise-fill" style="width:${g.level}%"></div></div>
+    <div class="hint" style="color:#8fa9c4;font-size:18px">${g.level}%</div>
+    ${g.rows.length?'<div class="glist">'+g.rows.map(r=>
+      `<div class="gpill">${esc(r.team)} <b>${r.score}</b></div>`).join('')+'</div>':''}
+  </div>`;
+}
+
+// шумомер слушает микрофон ноутбука и шлёт уровень на сервер
+function ensureNoiseMic(){
+  if(noiseMic) return;
+  noiseMic={stop:null};
+  navigator.mediaDevices?.getUserMedia({audio:true}).then(stream=>{
+    const ctx=new (window.AudioContext||window.webkitAudioContext)();
+    const src=ctx.createMediaStreamSource(stream), an=ctx.createAnalyser();
+    an.fftSize=512; src.connect(an);
+    const buf=new Uint8Array(an.fftSize);
+    let last=0;
+    const tick=()=>{
+      if(!noiseMic) return;
+      an.getByteTimeDomainData(buf);
+      let peak=0;
+      for(let i=0;i<buf.length;i++) peak=Math.max(peak,Math.abs(buf[i]-128));
+      const lvl=Math.min(100,Math.round(peak/128*160));
+      const f=$('noise-fill'); if(f) f.style.width=lvl+'%';
+      const now=Date.now();
+      if(now-last>200){ last=now;
+        fetch('/api/games/noise',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({level:lvl})}).catch(()=>{});
+      }
+      noiseMic.raf=requestAnimationFrame(tick);
+    };
+    noiseMic.stop=()=>{stream.getTracks().forEach(t=>t.stop());ctx.close().catch(()=>{});};
+    tick();
+  }).catch(()=>{ $('g-sub').textContent='Нет доступа к микрофону — разрешите его в браузере'; });
+}
+function stopNoiseMic(){
+  if(!noiseMic) return;
+  if(noiseMic.raf) cancelAnimationFrame(noiseMic.raf);
+  if(noiseMic.stop) noiseMic.stop();
+  noiseMic=null;
+}
+
+function renderScore(sc){
+  const box=$('score');
+  if(!sc||!sc.on||!sc.rows.length){ box.classList.remove('on'); return; }
+  box.classList.add('on');
+  $('score-rows').innerHTML=sc.rows.map((r,i)=>
+    `<div class="row ${i===0?'top':''}"><span>${i===0?'🏆 ':''}${esc(r.team)}</span><b>${r.score}</b></div>`).join('');
+}
+
 function renderGuests(list){
   $('guest-count').textContent=list.length;
   $('guests').innerHTML = list.length ? list.map(g=>
@@ -316,6 +504,8 @@ function applyState(s){
   $('closed').style.display=s.accepting?'none':'block';
   renderGuests(s.guests||[]);
   renderQuiz(s.quiz);
+  renderGame(s.game);
+  renderScore(s.scoreboard);
   renderStage(s.stage);
   applySound(s.sound);
 }
@@ -334,6 +524,8 @@ function connect(){
   es.addEventListener('sfx',e=>{const d=JSON.parse(e.data);playFx(d.id,d.volume);});
   es.addEventListener('guest_joined',e=>{ const d=JSON.parse(e.data); fetchGuests(); });
   es.addEventListener('guest_greeted',()=>fetchGuests());
+  es.addEventListener('game',e=>renderGame(JSON.parse(e.data)));
+  es.addEventListener('scoreboard',e=>renderScore(JSON.parse(e.data)));
   es.addEventListener('quiz_started',e=>renderQuiz(JSON.parse(e.data)));
   es.addEventListener('quiz_progress',e=>renderQuiz(JSON.parse(e.data)));
   es.addEventListener('quiz_closed',e=>{renderQuiz(JSON.parse(e.data));fetchGuests();});
@@ -345,6 +537,11 @@ async function fetchGuests(){
 connect();
 // страховка на случай пропущенных событий
 setInterval(fetchGuests, 10000);
+// гонка и шумомер живут по времени — подтягиваем состояние чаще
+setInterval(async()=>{
+  if(!gameId) return;
+  try{ const r=await fetch('/api/games/state'); const d=await r.json(); renderGame(d.game); }catch(e){}
+}, 1000);
 </script>
 </body>
 </html>

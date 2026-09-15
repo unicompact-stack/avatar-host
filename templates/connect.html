@@ -28,6 +28,27 @@
     padding:15px;font-size:17px;margin-bottom:9px;text-align:left;cursor:pointer}
   .opt.sel{border-color:#2563eb;background:#16305a}
   .hidden{display:none}
+  /* --- конкурсы на телефоне --- */
+  #game{margin-top:18px;border-top:1px solid #1c2e42;padding-top:16px}
+  #g-title{font-size:19px;margin-bottom:4px}
+  #g-sub{color:#6d829a;font-size:14px;margin-bottom:12px}
+  .tap{width:100%;height:150px;border-radius:20px;background:#2563eb;color:#fff;border:0;
+    font-size:26px;font-weight:900;cursor:pointer;user-select:none;-webkit-user-select:none;
+    touch-action:manipulation;transition:transform .05s}
+  .tap:active{transform:scale(.96);background:#1d4fd8}
+  .tap.off{background:#1c2e42;color:#6d829a}
+  .bingo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+  .bcell{background:#12243a;border:1px solid #24405e;border-radius:11px;padding:9px 6px;
+    font-size:11.5px;line-height:1.25;min-height:76px;display:flex;align-items:center;
+    justify-content:center;text-align:center}
+  .bcell.mk{background:#123326;border-color:#3fbf8f;color:#8ff0c8}
+  .stakes{display:flex;gap:8px;margin:10px 0}
+  .stakes button{flex:1;padding:12px;font-size:16px;background:#12243a;border:1px solid #24405e}
+  .stakes button.sel{background:#16305a;border-color:#2563eb}
+  .balance{text-align:center;font-size:17px;margin-bottom:10px}
+  .balance b{color:#ffd166;font-size:22px}
+  .big-ok{text-align:center;font-size:17px;color:#8ff0c8;padding:14px 0}
+  .note{color:#6d829a;font-size:13px;text-align:center;margin-top:8px}
 </style>
 </head>
 <body>
@@ -54,6 +75,11 @@
       <div class="muted" id="c-status" style="margin-top:8px"></div>
     </div>
 
+    <div id="game" class="hidden">
+      <h1 id="g-title" style="font-size:19px"></h1>
+      <div id="g-sub"></div>
+      <div id="g-body"></div>
+    </div>
     <div id="quiz" class="hidden">
       <h1 id="q-text" style="font-size:18px;margin:16px 0 12px"></h1>
       <div id="q-opts"></div>
@@ -85,11 +111,12 @@ async function join(){
 
 function showDone(name){
   $('step-join').classList.add('hidden'); $('step-done').classList.remove('hidden');
-  $('hello').textContent=`Привет, ${name}!`;
-  poll(); setInterval(poll,3000);
+  myName=name; $('hello').textContent=`Привет, ${name}!`;
+  poll(); setInterval(()=>poll(),3000);
+  setInterval(()=>{ if(gType==='taprace'||gType==='bets') poll(); },1000);
 }
 
-let answered=null, quizId=null;
+let answered=null, quizId=null, myName='';
 async function poll(){
   try{
     const r=await fetch('/api/guest/me?token='+encodeURIComponent(token));
@@ -98,6 +125,7 @@ async function poll(){
     const c=d.collect;
     if(c&&c.open){ $('collect').classList.remove('hidden'); $('c-prompt').textContent=c.prompt; }
     else { $('collect').classList.add('hidden'); }
+    renderGame(d.game,d.mine);
     const q=d.quiz;
     if(!q){$('quiz').classList.add('hidden');return;}
     if(q.id!==quizId){quizId=q.id;answered=null;}
@@ -109,6 +137,113 @@ async function poll(){
       (q.correct!=null?(answered===q.correct?'Верно! 🎉':`Правильный ответ: ${q.options[q.correct]}`):'Приём ответов закрыт');
   }catch(e){}
 }
+
+// --- конкурсы на телефоне гостя ---
+let gId=null, gType=null, betStake=null, wcSent=false, tapBuf=0, tapTimer=null;
+
+function renderGame(g,mine){
+  const box=$('game');
+  if(!g||!g.phone){ box.classList.add('hidden'); gId=null; return; }
+  box.classList.remove('hidden');
+  if(g.id!==gId){ gId=g.id; gType=g.type; betStake=null; wcSent=false; $('g-body').innerHTML=''; }
+  $('g-title').textContent=g.title;
+  ({wordcloud:pWordcloud,taprace:pTaprace,bets:pBets,bingo:pBingo}[g.type]||(()=>{}))(g,mine||{});
+}
+
+function pWordcloud(g,mine){
+  $('g-sub').textContent=g.prompt;
+  if(mine.sent||wcSent){
+    $('g-body').innerHTML='<div class="big-ok">Слово принято! Смотрите на экран 👀</div>'+
+      '<button class="opt" onclick="wcAgain()">Отправить другое слово</button>';
+    return;
+  }
+  if(!g.open){ $('g-body').innerHTML='<div class="note">Приём слов закрыт</div>'; return; }
+  if($('wc-input')) return;                      // не перерисовываем — собьём ввод
+  $('g-body').innerHTML=`<input id="wc-input" maxlength="40" placeholder="Одно слово"
+      autocomplete="off"><button onclick="wcSend()">Отправить</button>
+      <div class="note">Можно ${g.max_words>1?('до '+g.max_words+' слов'):'одно слово'}</div>`;
+}
+function wcAgain(){ wcSent=false; $('g-body').innerHTML=''; }
+async function wcSend(){
+  const el=$('wc-input'); const text=(el?.value||'').trim();
+  if(!text){ err('Напишите слово'); return; }
+  const d=await gsend({text});
+  if(!d.error){ wcSent=true; $('g-body').innerHTML=''; poll(); }
+}
+
+function pTaprace(g,mine){
+  $('g-sub').textContent=g.open?`Осталось ${g.left} секунд — жмите!`:'Гонка окончена';
+  const mineN=mine.my||0;
+  if(!$('tap-btn')){
+    $('g-body').innerHTML=`<button class="tap" id="tap-btn" onclick="tap()">ЖМИ!</button>
+      <div class="note" id="tap-n"></div>`;
+  }
+  const b=$('tap-btn');
+  if(b){ b.disabled=!g.open; b.classList.toggle('off',!g.open); b.textContent=g.open?'ЖМИ!':'Стоп'; }
+  const n=$('tap-n'); if(n) n.textContent=`Ваших нажатий: ${mineN+tapBuf}`;
+}
+function tap(){
+  tapBuf++;
+  const n=$('tap-n'); if(n) n.textContent=n.textContent.replace(/\d+$/,m=>+m+1);
+  if(navigator.vibrate) navigator.vibrate(12);
+  if(tapTimer) return;
+  // копим нажатия и шлём пачкой раз в 400 мс — иначе телефон завалит сервер
+  tapTimer=setTimeout(async()=>{
+    const n=tapBuf; tapBuf=0; tapTimer=null;
+    if(n>0) await gsend({taps:n});
+  },400);
+}
+
+function pBets(g,mine){
+  const bal=mine.balance!=null?mine.balance:g.start_balance;
+  if(g.result){
+    const me=(g.result.payouts||[]).find(p=>p.name===myName);
+    $('g-sub').textContent='Круг завершён';
+    $('g-body').innerHTML=`<div class="balance">У вас <b>${bal}</b> фишек</div>`+
+      (me?`<div class="big-ok">${me.won?`Угадали! +${me.gain} фишек 🎉`:`Мимо. −${me.stake} фишек`}</div>`
+         :'<div class="note">Вы не делали ставку в этом круге</div>');
+    return;
+  }
+  $('g-sub').textContent=g.question;
+  if(mine.my){
+    $('g-body').innerHTML=`<div class="balance">У вас <b>${bal}</b> фишек</div>
+      <div class="big-ok">Ставка принята: ${esc(g.options[mine.my.option])} · ${mine.my.stake} фишек</div>`;
+    return;
+  }
+  if(!g.open){ $('g-body').innerHTML='<div class="note">Приём ставок закрыт</div>'; return; }
+  $('g-body').innerHTML=`<div class="balance">У вас <b>${bal}</b> фишек</div>
+    <div class="stakes">`+g.stakes.map(v=>
+      `<button class="${betStake===v?'sel':''}" onclick="setStake(${v})">${v}</button>`).join('')+
+    `</div>`+g.options.map((o,i)=>
+      `<button class="opt" onclick="bet(${i})">${esc(o)} · ×${g.coef[i]||'—'}</button>`).join('');
+}
+function setStake(v){ betStake=v; poll(); }
+async function bet(i){
+  if(!betStake){ err('Сначала выберите ставку'); return; }
+  const d=await gsend({option:i,stake:betStake});
+  if(!d.error) poll();
+}
+
+function pBingo(g,mine){
+  const card=(mine.card)||[];
+  $('g-sub').textContent=mine.line?'У вас линия! Кричите «Бинго!» 🎉':'Отмечайте события вечера';
+  $('g-body').innerHTML='<div class="bingo-grid">'+card.map(c=>
+    `<div class="bcell ${c.marked?'mk':''}">${esc(c.text)}</div>`).join('')+'</div>'+
+    (mine.line?'<button style="margin-top:10px" onclick="claimBingo()">Бинго!</button>':
+      '<div class="note">Клетки закрывает ведущий, когда событие случилось</div>');
+}
+async function claimBingo(){ await gsend({claim:true}); }
+
+async function gsend(payload){
+  try{
+    const r=await fetch('/api/games/submit',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token,payload})});
+    const d=await r.json();
+    if(d.error) err(d.error); else err('');
+    return d;
+  }catch(e){ err('Нет связи'); return {error:'offline'}; }
+}
+
 async function sendWish(){
   const text=$('c-text').value.trim(); if(!text)return;
   const r=await fetch('/api/collect/add',{method:'POST',headers:{'Content-Type':'application/json'},

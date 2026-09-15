@@ -51,6 +51,27 @@
   .step .k{color:#6d829a;font-size:11px;text-transform:uppercase}
   .step button{padding:3px 9px;font-size:11px;margin:0;background:#24405e}
   .half{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  /* --- конкурсы --- */
+  .gcat{display:flex;flex-wrap:wrap;gap:8px}
+  .gtile{width:158px;background:#0a1420;border:1px solid #22384f;border-radius:12px;padding:10px;
+    cursor:pointer;transition:border-color .15s}
+  .gtile:hover{border-color:#2563eb}
+  .gtile.on{border-color:#2563eb;background:#10243f}
+  .gtile .nm{font-size:13.5px;font-weight:700;margin-bottom:4px}
+  .gtile .ds{font-size:11px;color:#6d829a;line-height:1.3;height:44px;overflow:hidden}
+  .gtile .tg{font-size:10px;color:#7d94ad;margin-top:6px}
+  .gtile .ph{font-size:10px;color:#4c9be8}
+  .glive{background:#0a1420;border:1px solid #2563eb;border-radius:12px;padding:12px;margin-top:10px;display:none}
+  .glive.on{display:block}
+  .glive h3{font-size:14px;margin-bottom:8px}
+  .glive .mini{font-size:12px;color:#8fa9c4;margin-bottom:8px}
+  .mark{display:inline-block;background:#12243a;border:1px solid #24405e;border-radius:8px;
+    padding:6px 9px;font-size:11.5px;margin:0 5px 5px 0;cursor:pointer;max-width:230px}
+  .mark.mk{background:#123326;border-color:#3fbf8f;color:#8ff0c8}
+  .sc-row{display:flex;gap:6px;align-items:center;margin-bottom:5px}
+  .sc-row .nm{flex:1;font-size:13px}
+  .sc-row button{padding:4px 9px;font-size:12px;margin:0}
+  .sc-row b{min-width:28px;text-align:right;color:#ffd166}
 </style>
 </head>
 <body>
@@ -64,6 +85,32 @@
     <div>Гостей: <b id="gcount">0</b></div>
     <div>Фаза: <b id="phase">—</b></div>
     <div>Движок: <b id="engine">—</b></div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>Конкурсы</h2>
+    <div class="gcat" id="gcat"></div>
+    <div class="glive" id="glive">
+      <h3 id="gl-title">—</h3>
+      <div class="mini" id="gl-mini"></div>
+      <div id="gl-ctl"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="ghost" onclick="gameAct('close')">Закрыть приём</button>
+        <button class="ghost" onclick="gameAct('open')">Открыть снова</button>
+        <button class="warn" onclick="gameStop()">Завершить конкурс</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>Счёт вечера по столам</h2>
+    <div class="row">
+      <button class="ghost" onclick="scoreShow(true)">Показать на экране</button>
+      <button class="ghost" onclick="scoreShow(false)">Скрыть</button>
+      <button class="warn" onclick="scoreReset()">Обнулить</button>
+    </div>
+    <div id="sc-list" style="margin-top:10px"></div>
+    <div class="muted" style="margin-top:6px">Команды берутся из поля «Стол» у гостей.</div>
   </div>
 
   <div class="card" style="margin-top:14px">
@@ -257,6 +304,85 @@ async function post(url,body){
     if(r.status===401){ banner('Сессия пульта потеряна — обновите страницу и введите PIN'); return; }
     const d=await r.json(); if(d.error) banner(d.error); return d;}catch(e){banner('Сеть недоступна');}
 }
+
+// ---------------------------------------------------------------- конкурсы
+let GCAT=[], curGame=null;
+async function gamesCatalog(){
+  try{
+    const r=await fetch('/api/games/catalog'); if(!r.ok) return;
+    GCAT=(await r.json()).games||[];
+    $('gcat').innerHTML=GCAT.map(g=>
+      `<div class="gtile" id="gt-${g.type}" onclick="gameStart('${g.type}')">
+         <div class="nm">${esc(g.title)}</div>
+         <div class="ds">${esc(g.desc)}</div>
+         <div class="tg">${esc(g.tags.join(' · '))} · ${esc(g.minutes)}</div>
+         <div class="ph">${g.phone?'📱 гости с телефонов':'🎤 ведёте вы'}</div>
+       </div>`).join('');
+  }catch(e){}
+}
+async function gameStart(type){
+  const cfg={};
+  if(type==='numbers'){
+    banner('«Цифры вечера» запущены с примерными карточками — замените их в сценарии.');
+  }
+  const d=await post('/api/games/start',{type,config:cfg});
+  if(d&&!d.error) gameRender(d);
+}
+async function gameStop(){ await post('/api/games/stop',{}); gameRender(null); }
+async function gameAct(action,params){
+  const d=await post('/api/games/action',{action,params:params||{}});
+  if(d&&!d.error) gameRender(d);
+}
+function gameRender(g){
+  curGame=g;
+  document.querySelectorAll('.gtile').forEach(t=>t.classList.remove('on'));
+  const box=$('glive');
+  if(!g){ box.classList.remove('on'); return; }
+  box.classList.add('on');
+  const tile=$('gt-'+g.type); if(tile) tile.classList.add('on');
+  $('gl-title').textContent=g.title+(g.open?'':' · приём закрыт');
+  const C={
+    wordcloud:()=>[`Ответили: ${g.answered}. Слов на экране: ${g.words.length}`,''],
+    taprace:()=>[`Осталось ${g.left} с. Лидер: ${g.rows[0]?esc(g.rows[0].team)+' ('+g.rows[0].taps+')':'—'}`,
+      `<button onclick="gameAct('extend',{seconds:15})">+15 секунд</button>`],
+    bets:()=>[`Круг ${g.round} · банк ${g.bank} · ставок ${g.answered}`,
+      (g.result?'':'<div class="muted" style="margin-bottom:6px">Что случилось на самом деле?</div>')+
+      (g.result?'':g.options.map((o,i)=>`<button onclick="gameAct('reveal',{option:${i}})">${esc(o)}</button>`).join(''))+
+      (g.result?`<button class="ok" onclick="gameAct('next')">Следующий круг</button>`:'')],
+    bingo:()=>[`Отмечено ${g.marked.length} из ${g.pool.length}${g.winners.length?' · кричали «Бинго»: '+g.winners.map(esc).join(', '):''}`,
+      '<div>'+g.pool.map(x=>
+        `<span class="mark ${x.marked?'mk':''}" onclick="gameAct('${x.marked?'unmark':'mark'}',{index:${x.i}})">${esc(x.text)}</span>`).join('')+'</div>'],
+    numbers:()=>[`Осталось раскрыть: ${g.left}`,
+      '<div>'+g.cards.map(c=>
+        `<span class="mark ${c.open?'mk':''}" onclick="gameAct('reveal',{index:${c.i}})">${esc(c.n)}</span>`).join('')+'</div>'],
+    toast:()=>[`Выдано тостов: ${g.shown}`+(g.current?` · сейчас: ${esc(g.current.guest||'—')}`:''),
+      `<button class="ok" onclick="gameAct('roll')">🎲 Следующий тост</button>`],
+    dancewheel:()=>[g.current?`Выпало: ${esc(g.current.name)}`:'Колесо ещё не крутили',
+      `<button class="ok" onclick="gameAct('spin')">🎡 Крутить колесо</button>`],
+    noise:()=>[g.active?`Кричит: ${esc(g.active)} · ${g.level}%`:'Выберите команду',
+      g.teams.map(t=>`<button onclick="gameAct('arm',{team:'${esc(t)}'})">${esc(t)}</button>`).join('')+
+      `<button class="ghost" onclick="gameAct('stop')">Стоп</button>`],
+  }[g.type];
+  const [mini,ctl]=C?C():['',''];
+  $('gl-mini').innerHTML=mini;
+  $('gl-ctl').innerHTML=ctl;
+}
+
+// ---------------------------------------------------------------- счёт вечера
+function scoreRender(sc){
+  if(!sc){ return; }
+  $('sc-list').innerHTML=sc.rows.length?sc.rows.map(r=>
+    `<div class="sc-row"><span class="nm">${esc(r.team)}</span>
+       <button class="ghost" onclick="scoreAdd('${esc(r.team)}',-1)">−1</button>
+       <button class="ghost" onclick="scoreAdd('${esc(r.team)}',1)">+1</button>
+       <button onclick="scoreAdd('${esc(r.team)}',3)">+3</button>
+       <b>${r.score}</b></div>`).join('')
+    : '<div class="muted">Пока нет столов — гости укажут их при входе</div>';
+}
+async function scoreAdd(team,points){ const d=await post('/api/score/add',{team,points}); scoreRender(d); }
+async function scoreReset(){ const d=await post('/api/score/reset',{}); scoreRender(d); }
+async function scoreShow(on){ const d=await post('/api/score/show',{on}); scoreRender(d); }
+
 function banner(msg){ const b=$('banner'); if(!msg){b.classList.remove('on');return;} b.textContent=msg; b.classList.add('on'); }
 function say(){ const t=$('text').value.trim(); if(!t)return; post('/api/say',{text:t}); $('text').value=''; }
 function preset(btn){ $('text').value=btn.querySelector('span').textContent; }
@@ -464,6 +590,7 @@ let filled=false;
 function applyState(s){
   $('code').textContent=s.code; $('phase').textContent=s.phase;
   renderQueue(s.queue); renderGuests(s.guests||[]); renderQuiz(s.quiz);
+  gameRender(s.game||null); scoreRender(s.scoreboard);
   if(s.stage){curStage=s.stage;renderStageInfo();}
   if(s.sound&&$('bg-sel').options.length)applySnd(s.sound);
   if(s.collect!==undefined) $('collectinfo').textContent = s.collect
@@ -483,6 +610,8 @@ es.addEventListener('reset',()=>{filled=false;});
 es.addEventListener('queue',e=>renderQueue(JSON.parse(e.data)));
 es.addEventListener('guest_joined',()=>refresh());
 es.addEventListener('guest_greeted',()=>refresh());
+es.addEventListener('game',e=>gameRender(JSON.parse(e.data)));
+es.addEventListener('scoreboard',e=>scoreRender(JSON.parse(e.data)));
 es.addEventListener('quiz_started',e=>renderQuiz(JSON.parse(e.data)));
 es.addEventListener('quiz_progress',e=>renderQuiz(JSON.parse(e.data)));
 es.addEventListener('quiz_closed',e=>{renderQuiz(JSON.parse(e.data));refresh();});
@@ -504,7 +633,12 @@ async function refresh(){
     if(s.engine_note) banner(s.engine_note);
   }catch(e){}
 }
-netInfo(); soundCatalog(); mediaList(); scList(); scState(); refresh(); setInterval(refresh,5000);
+netInfo(); soundCatalog(); mediaList(); scList(); scState(); gamesCatalog(); refresh(); setInterval(refresh,5000);
+// гонка и шумомер меняются каждую секунду — держим пульт в курсе
+setInterval(async()=>{
+  if(!curGame||!['taprace','noise'].includes(curGame.type)) return;
+  try{ const r=await fetch('/api/games/state'); const d=await r.json(); gameRender(d.game); }catch(e){}
+},1000);
 </script>
 </body>
 </html>
